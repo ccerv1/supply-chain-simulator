@@ -49,16 +49,18 @@ def process_geo_data(geo, exporters):
     return production_data
 
 def export_data(comtrade_data, production_data):
-    simulation_data = {
-        'exports': comtrade_data,
-        'production': production_data,
-        'metadata': {
-            'exports': 'COMTRADE 2019',
-            'production': 'ENVERITAS 2023/24 crop year'
-        }
-    }
-    with open('data/simulation_data.json', 'w') as f:
-        json.dump(simulation_data, f, indent=4)
+    comtrade_df = pd.DataFrame.from_dict(comtrade_data, orient='index')
+    production_df = pd.DataFrame.from_dict(production_data, orient='index')
+    combined_data = comtrade_df.join(production_df, how='outer')
+    combined_data = combined_data[['num_farmers', 'est_production', 'EU', 'Other']]
+    combined_data.columns = [
+        'Total Farmers', 
+        'Total Production', 
+        'Exports to EU', 
+        'Exports to Other Destinations'
+    ]
+    combined_data.index.name = 'Country'
+    combined_data.to_csv('data/simulation_data.csv')
 
 def main():
     comtrade, geo = load_data()
