@@ -1,5 +1,6 @@
 import pandas as pd
 from pathlib import Path
+import numpy as np
 
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / 'data'
@@ -56,17 +57,45 @@ def process_geo_data(geo, exporters):
     production_data = countries[['num_farmers', 'est_production']].T.to_dict()
     return production_data
 
-def export_data(comtrade_data, production_data):
-    comtrade_df = pd.DataFrame.from_dict(comtrade_data, orient='index')
-    production_df = pd.DataFrame.from_dict(production_data, orient='index')
-    combined_data = comtrade_df.join(production_df, how='outer')
-    combined_data = combined_data[['num_farmers', 'est_production', 'EU', 'Other']]
-    combined_data.columns = [
-        'Total Farmers', 
-        'Total Production', 
-        'Exports to EU', 
-        'Exports to Other Destinations'
-    ]
+def add_supply_chain_assumptions(comtrade_data, production_data):
+    """Add assumptions for number of exporters and middlemen based on country size"""
+    enhanced_data = {}
+    
+    for country in production_data:
+        country_data = {}
+        country_data['Total Farmers'] = production_data[country].get('num_farmers', 0)
+        country_data['Total Production'] = production_data[country].get('est_production', 0)
+        country_data['Exports to EU'] = comtrade_data.get(country, {}).get('EU', 0)
+        country_data['Exports to Other Destinations'] = comtrade_data.get(country, {}).get('Other', 0)
+
+        if country_data['Total Production'] > 0:
+            # Base number of 20 exporters, scaling up with production
+            # Cap at 200 exporters for very large producers
+            country_data['Total Exporters'] = min(
+                20 + int(np.sqrt(country_data['Total Production'] / 1e6 * 1.5)),
+                200
+            )
+        else:
+            country_data['Total Exporters'] = 0
+
+        # Add middleman assumptions - scales with number of farmers
+        if country_data['Total Farmers'] > 0:
+            # 100 middlemen for small countries, scaling up to 5000 middlemen for very large producer countries
+            # Cap at 5000 middlemen for very large producer countries
+            country_data['Total Middlemen'] = min(
+                100 + int(country_data['Total Farmers'] / 500),
+                5000
+            )
+        else:
+            country_data['Total Middlemen'] = 0
+
+        enhanced_data[country] = country_data
+        
+    return enhanced_data
+
+def export_data(enhanced_data):
+    """Export the combined data to CSV"""
+    combined_data = pd.DataFrame.from_dict(enhanced_data, orient='index')
     combined_data.index.name = 'Country'
     combined_data.to_csv(SIMULATION_DATA_PATH)
 
@@ -74,7 +103,8 @@ def main():
     comtrade, geo = load_data()
     comtrade_data, exporters = process_comtrade_data(comtrade)
     production_data = process_geo_data(geo, exporters)
-    export_data(comtrade_data, production_data)
+    enhanced_data = add_supply_chain_assumptions(comtrade_data, production_data)
+    export_data(enhanced_data)
 
 if __name__ == "__main__":
     main()
