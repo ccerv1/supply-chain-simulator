@@ -4,7 +4,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / 'data'
 LOCAL_DATA_DIR = DATA_DIR / '_local'
-SIMULATION_DATA_PATH = DATA_DIR / 'simulation_data.csv'
+SIMULATION_DATA_PATH = DATA_DIR / 'country_assums.csv'
 
 EU_COUNTRIES = [
     'Austria', 'Belgium', 'Bulgaria', 'Croatia', 'Cyprus', 'Czechia', 'Denmark',

@@ -9,7 +9,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / 'data'
-SIMULATION_DATA_PATH = DATA_DIR / 'simulation_data.csv'
+SIMULATION_DATA_PATH = DATA_DIR / 'country_assums.csv'
 RESULTS_DIR = DATA_DIR / '_local/results'
 RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -179,6 +179,9 @@ def simulate_country_supply_chain(
 ) -> pd.DataFrame:
     
     country_data = get_country_data(country, config)
+    if np.isnan(country_data.get('Total Production')) or np.isnan(country_data.get('Total Farmers')):
+        raise ValueError(f"Country data for {country} is missing total production or total farmers")
+        return pd.DataFrame()
 
     production_distribution = model_farmer_production(country_data, config)
     farmer_ids = np.arange(len(production_distribution))
@@ -240,10 +243,12 @@ def simulate_country_supply_chain(
 
 
 def seed_country_supply_chain(country: str, config: SimulationConfig) -> pd.DataFrame:
-    all_flows_list = []
-    flows  = simulate_country_supply_chain(country=country, config=config)
-    all_flows_list.append(flows)
-    return pd.concat(all_flows_list, ignore_index=True)
+    try:
+        flows = simulate_country_supply_chain(country=country, config=config)
+        return flows
+    except ValueError as e:
+        print(f"Skipping {country}: {str(e)}")
+        return pd.DataFrame()
 
 
 def seed_all_countries(countries: List[str], config: SimulationConfig) -> pd.DataFrame:
@@ -261,7 +266,7 @@ def seed_all_countries(countries: List[str], config: SimulationConfig) -> pd.Dat
 if __name__ == "__main__":
     config = SimulationConfig()
     countries = SIM_DATA['Country'].unique().tolist()
-    countries = ['Rwanda', 'Colombia', 'Brazil']
+    #countries = ['Rwanda', 'Colombia', 'Brazil']
     flows_results = seed_all_countries(countries=countries, config=config)
     
     output_path = RESULTS_DIR / "global_flows.parquet"
