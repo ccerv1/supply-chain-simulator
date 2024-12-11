@@ -12,6 +12,8 @@ DATA_DIR = BASE_DIR / 'data'
 SIMULATION_DATA_PATH = DATA_DIR / '_local/results/global_flows.parquet'
 DATA = pd.read_parquet(SIMULATION_DATA_PATH)
 
+CHART_COLOR = '#2E8B57'
+
 
 def plot_kde(df, group_col, value_col, title):
     grouped = df.groupby(group_col)[value_col].sum()
@@ -32,7 +34,7 @@ def plot_kde(df, group_col, value_col, title):
     fig, ax = plt.subplots(figsize=(10, 3))
     
     num_bins = 50 if len(grouped) < 100000 else 200
-    counts, bins, _ = ax.hist(grouped, bins=num_bins, density=True, alpha=0.7, color='blue')
+    counts, bins, _ = ax.hist(grouped, bins=num_bins, density=True, alpha=0.7, color=CHART_COLOR)
     density = counts * (bins[1] - bins[0]) * len(grouped)
     
     ax.set_title(f"{title} (n={n:,.0f})", fontsize=14, fontweight='bold', loc='left')
@@ -59,7 +61,7 @@ def plot_kde(df, group_col, value_col, title):
 def plot_farmers_per_exporter(farmers_per_exporter):
     farmer_counts = {exporter: len(farmers) for exporter, farmers in farmers_per_exporter.items()}
     fig, ax = plt.subplots(figsize=(10, 3))
-    pd.Series(farmer_counts).sort_values(ascending=False).plot(kind="bar", width=.8, ax=ax)
+    pd.Series(farmer_counts).sort_values(ascending=False).plot(kind="bar", width=.8, ax=ax, color=CHART_COLOR)
     ax.set_title("Number of Unique Farmers per Exporter")
     ax.set_xlabel("Exporter")
     
@@ -80,27 +82,12 @@ def main():
     
     if country:
         country_df = DATA[DATA["country"] == country]
-
-        st.subheader("Distribution Analysis")
         
-        st.markdown("### Farmers")
+        # Calculate number of farmers early
         farmers_df = country_df[country_df["source"].str.startswith("F")]
         num_farmers = farmers_df['source'].nunique()
-        fig_farmers = plot_kde(farmers_df, "source", "value", f"Farmers in {country}")
-        st.pyplot(fig_farmers)
-
-        st.markdown("### Middlemen")
-        middlemen_df = country_df[country_df["source"].str.startswith("M")]
-        fig_middlemen = plot_kde(middlemen_df, "source", "value", f"Middlemen in {country}")
-        st.pyplot(fig_middlemen)
-
-        st.markdown("### Exporters")
-        exporters_df = country_df[country_df["target"].str.startswith("E")]
-        fig_exporters = plot_kde(exporters_df, "target", "value", f"Exporters in {country}")
-        st.pyplot(fig_exporters)
-
-        st.subheader("Traceability Analysis")
         
+        # Traceability calculations
         middleman_to_farmers = (
             country_df[country_df["source"].str.startswith("F")]
             .groupby("target")["source"]
@@ -121,10 +108,8 @@ def main():
             )
             for exporter, middlemen in exporter_to_middlemen.items()
         }
-
-        fig_farmers_per_exporter = plot_farmers_per_exporter(farmers_per_exporter)
-        st.pyplot(fig_farmers_per_exporter)
-
+        
+        # Random Sampling Analysis
         st.subheader("Random Sampling Analysis")
         total_exporters = len(farmers_per_exporter)
         N = total_exporters // 3
@@ -133,9 +118,32 @@ def main():
         
         st.metric(
             label=f"Unique farmers across {N} random exporters",
-            value=f"{len(random_farmers_union):,.0f}",
-            delta=f"out of {num_farmers:,.0f} total in country"
+            value=f"{len(random_farmers_union):,.0f}"
         )
+        st.caption(f"out of {num_farmers:,.0f} total in country")
+        
+        st.subheader("Distribution Analysis")
+        
+        st.markdown("### Farmers")
+        farmers_df = country_df[country_df["source"].str.startswith("F")]
+        num_farmers = farmers_df['source'].nunique()
+        fig_farmers = plot_kde(farmers_df, "source", "value", f"Farmers in {country}")
+        st.pyplot(fig_farmers)
+
+        st.markdown("### Middlemen")
+        middlemen_df = country_df[country_df["source"].str.startswith("M")]
+        fig_middlemen = plot_kde(middlemen_df, "source", "value", f"Middlemen in {country}")
+        st.pyplot(fig_middlemen)
+
+        st.markdown("### Exporters")
+        exporters_df = country_df[country_df["target"].str.startswith("E")]
+        fig_exporters = plot_kde(exporters_df, "target", "value", f"Exporters in {country}")
+        st.pyplot(fig_exporters)
+
+        st.subheader("Traceability Analysis")
+        
+        fig_farmers_per_exporter = plot_farmers_per_exporter(farmers_per_exporter)
+        st.pyplot(fig_farmers_per_exporter)
 
 
 if __name__ == "__main__":
