@@ -61,7 +61,7 @@ The Supply Chain Simulator is a Python-based project designed to model and simul
 
 3. **Launch Dashboard**: Start the Streamlit dashboard to explore the simulation results:
    ```bash
-   streamlit run dashboard.py
+   streamlit run supply_chain_simulator/dashboard.py
    ```
 
 ## Requirements

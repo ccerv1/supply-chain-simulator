@@ -15,7 +15,7 @@ DATA = pd.read_parquet(SIMULATION_DATA_PATH)
 CHART_COLOR = '#2E8B57'
 
 
-def plot_kde(df, group_col, value_col, title):
+def plot_kde(df, group_col, value_col, title, figsize=(10, 3)):
     grouped = df.groupby(group_col)[value_col].sum()
     n = len(grouped)
     
@@ -31,7 +31,7 @@ def plot_kde(df, group_col, value_col, title):
     
     sns.set_style("whitegrid")
     palette = sns.color_palette("coolwarm", as_cmap=True)
-    fig, ax = plt.subplots(figsize=(10, 3))
+    fig, ax = plt.subplots(figsize=figsize)
     
     num_bins = 50 if len(grouped) < 100000 else 200
     counts, bins, _ = ax.hist(grouped, bins=num_bins, density=True, alpha=0.7, color=CHART_COLOR)
@@ -58,9 +58,9 @@ def plot_kde(df, group_col, value_col, title):
     return fig
 
 
-def plot_farmers_per_exporter(farmers_per_exporter):
+def plot_farmers_per_exporter(farmers_per_exporter, figsize=(10, 3)):
     farmer_counts = {exporter: len(farmers) for exporter, farmers in farmers_per_exporter.items()}
-    fig, ax = plt.subplots(figsize=(10, 3))
+    fig, ax = plt.subplots(figsize=figsize)
     pd.Series(farmer_counts).sort_values(ascending=False).plot(kind="bar", width=.8, ax=ax, color=CHART_COLOR)
     ax.set_title("Number of Unique Farmers per Exporter")
     ax.set_xlabel("Exporter")
@@ -74,76 +74,141 @@ def plot_farmers_per_exporter(farmers_per_exporter):
     return fig
 
 
+def country_analysis(country, country_df, small_charts=False):
+    figsize = (5, 3) if small_charts else (10, 3)
+    
+    farmers_df = country_df[country_df["source"].str.startswith("F")]
+    num_farmers = farmers_df['source'].nunique()
+    
+    # Traceability calculations
+    middleman_to_farmers = (
+        country_df[country_df["source"].str.startswith("F")]
+        .groupby("target")["source"]
+        .apply(set)
+        .to_dict()
+    )
+
+    exporter_to_middlemen = (
+        country_df[country_df["source"].str.startswith("M")]
+        .groupby("target")["source"]
+        .apply(set)
+        .to_dict()
+    )
+
+    farmers_per_exporter = {
+        exporter: set.union(
+            *(middleman_to_farmers.get(middleman, set()) for middleman in middlemen)
+        )
+        for exporter, middlemen in exporter_to_middlemen.items()
+    }
+    
+    # Random Sampling Analysis
+    total_exporters = len(farmers_per_exporter)
+    N = total_exporters // 3
+    random_exporters = random.sample(list(farmers_per_exporter.keys()), min(N, len(farmers_per_exporter)))
+    random_farmers_union = set.union(*(farmers_per_exporter[exporter] for exporter in random_exporters))
+    
+    # Generate all plots
+    fig_farmers = plot_kde(farmers_df, "source", "value", f"Farmers in {country}", figsize)
+    
+    middlemen_df = country_df[country_df["source"].str.startswith("M")]
+    fig_middlemen = plot_kde(middlemen_df, "source", "value", f"Middlemen in {country}", figsize)
+    
+    exporters_df = country_df[country_df["target"].str.startswith("E")]
+    fig_exporters = plot_kde(exporters_df, "target", "value", f"Exporters in {country}", figsize)
+    
+    fig_farmers_per_exporter = plot_farmers_per_exporter(farmers_per_exporter, figsize)
+    
+    return {
+        'num_farmers': num_farmers,
+        'random_sample_size': len(random_farmers_union),
+        'total_exporters': total_exporters,
+        'figures': {
+            'farmers': fig_farmers,
+            'middlemen': fig_middlemen,
+            'exporters': fig_exporters,
+            'farmers_per_exporter': fig_farmers_per_exporter
+        }
+    }
+
+
 def main():
+    st.set_page_config(layout="wide")
+    
     st.title("Supply Chain Simulator")
     
-    countries = sorted(DATA["country"].unique())
-    country = st.selectbox("Select a Country", countries)
+    tab1, tab2 = st.tabs(["Country Deep Dive", "Global View"])
     
-    if country:
-        country_df = DATA[DATA["country"] == country]
-        
-        # Calculate number of farmers early
-        farmers_df = country_df[country_df["source"].str.startswith("F")]
-        num_farmers = farmers_df['source'].nunique()
-        
-        # Traceability calculations
-        middleman_to_farmers = (
-            country_df[country_df["source"].str.startswith("F")]
-            .groupby("target")["source"]
-            .apply(set)
-            .to_dict()
-        )
-
-        exporter_to_middlemen = (
-            country_df[country_df["source"].str.startswith("M")]
-            .groupby("target")["source"]
-            .apply(set)
-            .to_dict()
-        )
-
-        farmers_per_exporter = {
-            exporter: set.union(
-                *(middleman_to_farmers.get(middleman, set()) for middleman in middlemen)
+    TOP_COUNTRIES = [
+        "Brazil", "Vietnam", "Colombia", "Indonesia", "Ethiopia", 
+        "Honduras", "Guatemala", "Peru", "Uganda", "India", 
+        "Mexico", "Burundi"
+    ]
+    
+    countries = sorted(DATA["country"].unique())
+    
+    with tab1:
+        country = st.selectbox("Select a Country", countries)
+        if country:
+            country_df = DATA[DATA["country"] == country]
+            results = country_analysis(country, country_df)
+            
+            st.subheader("Est. Farmers Selling to EU")
+            st.metric(
+                label=f"Unique farmers across {results['total_exporters'] // 3} randomly selected exporters",
+                value=f"{results['random_sample_size']:,.0f}"
             )
-            for exporter, middlemen in exporter_to_middlemen.items()
-        }
-        
-        # Random Sampling Analysis
-        st.subheader("Random Sampling Analysis")
-        total_exporters = len(farmers_per_exporter)
-        N = total_exporters // 3
-        random_exporters = random.sample(list(farmers_per_exporter.keys()), min(N, len(farmers_per_exporter)))
-        random_farmers_union = set.union(*(farmers_per_exporter[exporter] for exporter in random_exporters))
-        
-        st.metric(
-            label=f"Unique farmers across {N} random exporters",
-            value=f"{len(random_farmers_union):,.0f}"
-        )
-        st.caption(f"out of {num_farmers:,.0f} total in country")
-        
-        st.subheader("Distribution Analysis")
-        
-        st.markdown("### Farmers")
-        farmers_df = country_df[country_df["source"].str.startswith("F")]
-        num_farmers = farmers_df['source'].nunique()
-        fig_farmers = plot_kde(farmers_df, "source", "value", f"Farmers in {country}")
-        st.pyplot(fig_farmers)
-
-        st.markdown("### Middlemen")
-        middlemen_df = country_df[country_df["source"].str.startswith("M")]
-        fig_middlemen = plot_kde(middlemen_df, "source", "value", f"Middlemen in {country}")
-        st.pyplot(fig_middlemen)
-
-        st.markdown("### Exporters")
-        exporters_df = country_df[country_df["target"].str.startswith("E")]
-        fig_exporters = plot_kde(exporters_df, "target", "value", f"Exporters in {country}")
-        st.pyplot(fig_exporters)
-
-        st.subheader("Traceability Analysis")
-        
-        fig_farmers_per_exporter = plot_farmers_per_exporter(farmers_per_exporter)
-        st.pyplot(fig_farmers_per_exporter)
+            st.caption(f"out of {results['num_farmers']:,.0f} total farmers in country")
+            
+            st.subheader("Distribution Analysis")
+            
+            st.markdown("### Farmers")
+            st.pyplot(results['figures']['farmers'])
+            
+            st.markdown("### Middlemen")
+            st.pyplot(results['figures']['middlemen'])
+            
+            st.markdown("### Exporters")
+            st.pyplot(results['figures']['exporters'])
+            
+            st.subheader("Traceability Analysis")
+            st.pyplot(results['figures']['farmers_per_exporter'])
+    
+    with tab2:
+        st.subheader("Global Overview")
+        for country in TOP_COUNTRIES:
+            if country not in countries:
+                continue
+            country_df = DATA[DATA["country"] == country]
+            results = country_analysis(country, country_df, small_charts=True)
+            
+            cols = st.columns([1, 2, 2, 2])
+            with cols[0]:
+                st.markdown(f"### {country}")
+                sample_value = results['random_sample_size']
+                formatted_value = f"{sample_value/1e6:.0f}M" if sample_value >= 1e6 else f"{sample_value/1e3:.0f}K"
+                total_farmers = results['num_farmers']
+                formatted_total = f"{total_farmers/1e6:.0f}M" if total_farmers >= 1e6 else f"{total_farmers/1e3:.0f}K"
+                
+                st.metric(
+                    label=f"Est. Farmers Selling to EU",
+                    value=formatted_value,
+                    help=f"Unique farmers across {results['total_exporters'] // 3} randomly selected exporters, out of {formatted_total} total farmers in country"
+                )
+            
+            with cols[1]:
+                st.pyplot(results['figures']['farmers'])
+            
+            with cols[2]:
+                st.pyplot(results['figures']['middlemen'])
+            
+            with cols[3]:
+                st.pyplot(results['figures']['exporters'])
+            
+            # with cols[4]:
+            #     st.pyplot(results['figures']['farmers_per_exporter'])
+            
+            st.divider()
 
 
 if __name__ == "__main__":
