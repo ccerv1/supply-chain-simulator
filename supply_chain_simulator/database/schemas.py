@@ -69,8 +69,8 @@ SCHEMA_DEFINITIONS = {
         )
     """,
     
-    'trading_relationships': """
-        CREATE TABLE IF NOT EXISTS trading_relationships (
+    'trading_flows': """
+        CREATE TABLE IF NOT EXISTS trading_flows (
             year INTEGER,
             country_id TEXT,
             farmer_id TEXT,

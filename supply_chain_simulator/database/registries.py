@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from models.actors import Farmer, Middleman, Exporter
 from models.geography import Country, Geography
-from models.relationships import TradingRelationship
+from models.relationships import Trade
 
 class BaseRegistry:
     """Base class for all registries providing common database operations."""
@@ -132,34 +132,34 @@ class ExporterRegistry(BaseRegistry):
 class TradingRegistry(BaseRegistry):
     """Registry for managing trading relationships."""
     
-    def create_many(self, relationships: List[TradingRelationship]) -> None:
+    def create_many(self, relationships: List[Trade]) -> None:
         self.db.execute_many("""
-            INSERT INTO trading_relationships VALUES (
+            INSERT INTO trading_flows VALUES (
                 :year, :country_id, :farmer_id, :middleman_id, :exporter_id,
                 :sold_to_eu, :amount_kg
             )
         """, [r.to_dict() for r in relationships])
     
-    def get_by_year(self, year: int) -> List[TradingRelationship]:
+    def get_by_year(self, year: int) -> List[Trade]:
         data = self.db.fetch_all(
-            "SELECT * FROM trading_relationships WHERE year = ?",
+            "SELECT * FROM trading_flows WHERE year = ?",
             (year,)
         )
-        return [TradingRelationship.from_dict(row) for row in data]
+        return [Trade.from_dict(row) for row in data]
     
-    def get_by_year_and_country(self, year: int, country_id: str) -> List[TradingRelationship]:
+    def get_by_year_and_country(self, year: int, country_id: str) -> List[Trade]:
         data = self.db.fetch_all("""
-            SELECT * FROM trading_relationships 
+            SELECT * FROM trading_flows 
             WHERE year = ? AND country_id = ?
         """, (year, country_id))
-        return [TradingRelationship.from_dict(row) for row in data]
+        return [Trade.from_dict(row) for row in data]
     
-    def get_by_year_and_middleman(self, year: int, middleman_id: str) -> List[TradingRelationship]:
+    def get_by_year_and_middleman(self, year: int, middleman_id: str) -> List[Trade]:
         data = self.db.fetch_all("""
-            SELECT * FROM trading_relationships 
+            SELECT * FROM trading_flows 
             WHERE year = ? AND middleman_id = ?
         """, (year, middleman_id))
-        return [TradingRelationship.from_dict(row) for row in data]
+        return [Trade.from_dict(row) for row in data]
     
     def get_year_summary(self, year: int, country_id: str) -> Dict[str, Any]:
         return self.db.fetch_one("""
@@ -170,7 +170,7 @@ class TradingRegistry(BaseRegistry):
                 SUM(amount_kg) as total_volume,
                 SUM(CASE WHEN sold_to_eu THEN amount_kg ELSE 0 END) as eu_volume,
                 AVG(CASE WHEN sold_to_eu THEN 1.0 ELSE 0.0 END) as eu_ratio
-            FROM trading_relationships
+            FROM trading_flows
             WHERE year = ? AND country_id = ?
         """, (year, country_id))
     
@@ -180,7 +180,7 @@ class TradingRegistry(BaseRegistry):
                 SELECT 
                     farmer_id,
                     COUNT(DISTINCT middleman_id) as num_middlemen
-                FROM trading_relationships
+                FROM trading_flows
                 WHERE year = ? AND country_id = ?
                 GROUP BY farmer_id
             ),
@@ -188,7 +188,7 @@ class TradingRegistry(BaseRegistry):
                 SELECT 
                     middleman_id,
                     COUNT(DISTINCT exporter_id) as num_exporters
-                FROM trading_relationships
+                FROM trading_flows
                 WHERE year = ? AND country_id = ?
                 GROUP BY middleman_id
             )
@@ -211,7 +211,7 @@ class TradingRegistry(BaseRegistry):
         """Get all years present in the trading relationships."""
         data = self.db.fetch_all("""
             SELECT DISTINCT year 
-            FROM trading_relationships 
+            FROM trading_flows 
             ORDER BY year
         """)
         return [row['year'] for row in data]
@@ -220,7 +220,7 @@ class TradingRegistry(BaseRegistry):
         """Get list of geography IDs that a middleman operated in for a given year."""
         data = self.db.fetch_all("""
             SELECT DISTINCT f.geography_id
-            FROM trading_relationships tr
+            FROM trading_flows tr
             JOIN farmers f ON tr.farmer_id = f.id
             WHERE tr.year = ? 
             AND tr.country_id = ?

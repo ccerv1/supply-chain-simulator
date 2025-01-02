@@ -13,7 +13,7 @@ import logging
 
 from models.actors import Farmer, Middleman, Exporter
 from models.geography import Country, Geography
-from models.relationships import TradingRelationship
+from models.relationships import Trade
 from database.manager import DatabaseManager
 from database.registries import (
     CountryRegistry,
@@ -37,14 +37,15 @@ class TradeSimulator:
         self.exporter_registry = ExporterRegistry(db_manager)
         self.trading_registry = TradingRegistry(db_manager)
 
-    def create_initial_relationships(
+    def simulate_trade_flows(
         self,
         country: Country,
         farmers: List[Farmer],
         middlemen: List[Middleman],
         exporters: List[Exporter],
-        middleman_geographies: Dict[str, List[str]]
-    ) -> List[TradingRelationship]:
+        middleman_geographies: Dict[str, List[str]],
+        year: int = 0
+    ) -> List[Trade]:
         """Create initial trading relationships between actors."""
         
         if not middleman_geographies:
@@ -73,7 +74,7 @@ class TradeSimulator:
 
         # Generate relationships with volumes
         return self._generate_relationships(
-            year=0,
+            year=year,
             country=country,
             farmer_to_middlemen=farmer_to_middlemen,
             mm_to_exporters=mm_to_exporters,
@@ -86,32 +87,30 @@ class TradeSimulator:
         exporters: List[Exporter],
         country: Country
     ) -> Dict[str, List[Exporter]]:
-        """Assign exporters to middlemen based on loyalty and geography coverage."""
+        """Vectorized assignment of exporters to middlemen."""
         mm_to_exporters = {}
         
-        for mm in middlemen:
-            # Modified: Use square of (1-loyalty) to skew towards maximum exporters
-            # This makes higher numbers of exporters more likely
-            num_exporters = max(1, round(
-                country.max_exporters_per_middleman * (1 - mm.loyalty**2)
-            ))
-            
-            # Weight exporters by competitiveness and middleman's geography coverage
-            geo_coverage = len(mm_to_exporters.get(mm.id, []))
-            exporter_scores = [
-                e.competitiveness * (1 + geo_coverage/len(exporters))
-                for e in exporters
-            ]
-            probs = np.array(exporter_scores) / sum(exporter_scores)
-            
-            chosen_exporters = list(np.random.choice(
+        # Convert to numpy arrays for vectorized operations
+        loyalties = np.array([mm.loyalty for mm in middlemen])
+        competitiveness = np.array([e.competitiveness for e in exporters])
+        
+        # Vectorized calculation of number of exporters per middleman
+        num_exporters_per_mm = np.maximum(1, np.round(
+            country.max_exporters_per_middleman * (1 - loyalties**2)
+        )).astype(int)
+        
+        # Normalize competitiveness for probability calculation
+        probs = competitiveness / competitiveness.sum()
+        
+        # Vectorized assignment
+        for mm, num_exp in zip(middlemen, num_exporters_per_mm):
+            chosen_exporters = np.random.choice(
                 exporters,
-                size=num_exporters,
+                size=min(num_exp, len(exporters)),
                 p=probs,
                 replace=False
-            ))
-            
-            mm_to_exporters[mm.id] = chosen_exporters
+            )
+            mm_to_exporters[mm.id] = list(chosen_exporters)
         
         return mm_to_exporters
 
@@ -121,27 +120,34 @@ class TradeSimulator:
         geo_to_middlemen: Dict[str, List[Middleman]],
         country: Country
     ) -> Dict[str, List[Middleman]]:
-        """Assign middlemen to farmers based on loyalty and geography."""
+        """Vectorized assignment of middlemen to farmers."""
         farmer_to_middlemen = {}
         
+        # Group farmers by geography for batch processing
+        geo_farmers = defaultdict(list)
         for farmer in farmers:
-            available_middlemen = geo_to_middlemen.get(farmer.geography_id, [])
+            geo_farmers[farmer.geography_id].append(farmer)
+        
+        # Process each geography batch
+        for geo_id, geo_farmers_list in geo_farmers.items():
+            available_middlemen = geo_to_middlemen.get(geo_id, [])
             if not available_middlemen:
                 continue
             
-            # Number of buyers based on loyalty
-            num_buyers = max(1, round(
-                country.max_buyers_per_farmer * (1 - farmer.loyalty**2)
-            ))
-            num_buyers = min(num_buyers, len(available_middlemen))
+            # Vectorized loyalty calculations
+            loyalties = np.array([f.loyalty for f in geo_farmers_list])
+            num_buyers = np.maximum(1, np.round(
+                country.max_buyers_per_farmer * (1 - loyalties**2)
+            )).astype(int)
             
-            chosen_middlemen = list(np.random.choice(
-                available_middlemen,
-                size=num_buyers,
-                replace=False
-            ))
-            
-            farmer_to_middlemen[farmer.id] = chosen_middlemen
+            # Batch assignment for all farmers in this geography
+            for farmer, num_mm in zip(geo_farmers_list, num_buyers):
+                chosen_middlemen = list(np.random.choice(
+                    available_middlemen,
+                    size=min(num_mm, len(available_middlemen)),
+                    replace=False
+                ))
+                farmer_to_middlemen[farmer.id] = chosen_middlemen
         
         return farmer_to_middlemen
 
@@ -152,44 +158,50 @@ class TradeSimulator:
         farmer_to_middlemen: Dict[str, List[Middleman]],
         mm_to_exporters: Dict[str, List[Exporter]],
         farmers: List[Farmer]
-    ) -> List[TradingRelationship]:
-        """Generate final relationships with volumes and EU sales."""
+    ) -> List[Trade]:
+        """Generate relationships using vectorized operations where possible."""
         relationships = []
         total_eu_volume = 0
         
-        # Add logging for initial targets
-        logger.info(f"Target total production: {country.total_production:,} kg")
-        logger.info(f"Target EU exports: {country.exports_to_eu:,} kg")
+        # Pre-calculate all random splits using numpy
+        farmer_splits = {
+            f.id: np.random.dirichlet(np.ones(len(farmer_to_middlemen[f.id])))
+            for f in farmers if f.id in farmer_to_middlemen
+        }
         
-        # Process each farmer's production
+        mm_splits = {
+            mm_id: np.random.dirichlet(np.ones(len(exporters)))
+            for mm_id, exporters in mm_to_exporters.items()
+        }
+        
+        # Vectorized EU sales probability calculation
+        eu_probs = np.random.random(len(farmers))
+        
+        # Process relationships in batches
         for farmer in farmers:
             if farmer.id not in farmer_to_middlemen:
                 continue
             
-            # Split farmer's production among middlemen
             mm_list = farmer_to_middlemen[farmer.id]
-            mm_split = np.random.dirichlet(np.ones(len(mm_list)))
+            mm_split = farmer_splits[farmer.id]
             
-            # For each middleman, create relationships with their exporters
             for mm, mm_ratio in zip(mm_list, mm_split):
                 mm_volume = farmer.production_amount * mm_ratio
                 exporters = mm_to_exporters[mm.id]
-                
-                # Split middleman's volume among exporters
-                exp_split = np.random.dirichlet(np.ones(len(exporters)))
+                exp_split = mm_splits[mm.id]
                 
                 for exp, exp_ratio in zip(exporters, exp_split):
                     exp_volume = mm_volume * exp_ratio
                     
-                    # Determine EU sales based on traceability rate
+                    # EU sales determination
                     sold_to_eu = False
                     if total_eu_volume < country.exports_to_eu:
                         eu_threshold = 1 - (country.traceability_rate * exp.eu_preference)
                         if np.random.random() > eu_threshold:
                             sold_to_eu = True
                             total_eu_volume += exp_volume
-
-                    relationships.append(TradingRelationship(
+                    
+                    relationships.append(Trade(
                         year=year,
                         country_id=country.id,
                         farmer_id=farmer.id,
@@ -198,127 +210,26 @@ class TradeSimulator:
                         amount_kg=int(exp_volume),
                         sold_to_eu=sold_to_eu
                     ))
-
-        # Final scaling to match country totals
-        eu_relationships = [r for r in relationships if r.sold_to_eu]
-        non_eu_relationships = [r for r in relationships if not r.sold_to_eu]
         
-        # Adjust EU volumes by modifying largest sale
-        if eu_relationships:
-            current_eu_volume = sum(r.amount_kg for r in eu_relationships)
-            volume_difference = country.exports_to_eu - current_eu_volume
-            largest_eu_rel = max(eu_relationships, key=lambda r: r.amount_kg)
-            largest_eu_rel.amount_kg += volume_difference
-
-        # Adjust non-EU volumes by modifying largest sale
-        non_eu_target = country.total_production - country.exports_to_eu
-        if non_eu_relationships:
-            current_non_eu_volume = sum(r.amount_kg for r in non_eu_relationships)
-            volume_difference = non_eu_target - current_non_eu_volume
-            largest_non_eu_rel = max(non_eu_relationships, key=lambda r: r.amount_kg)
-            largest_non_eu_rel.amount_kg += volume_difference
-
-        # After scaling, add verification logging
-        final_eu_volume = sum(r.amount_kg for r in relationships if r.sold_to_eu)
-        final_total_volume = sum(r.amount_kg for r in relationships)
+        # Vectorized volume adjustments
+        self._adjust_volumes(relationships, country)
         
-        logger.info(f"Final EU volume: {final_eu_volume:,} kg")
-        logger.info(f"Final total volume: {final_total_volume:,} kg")
-        
-        # Add validation checks
-        if abs(final_eu_volume - country.exports_to_eu) > 1:
-            logger.warning(f"EU volume mismatch: {final_eu_volume:,} vs target {country.exports_to_eu:,}")
-        if abs(final_total_volume - country.total_production) > 1:
-            logger.warning(f"Total volume mismatch: {final_total_volume:,} vs target {country.total_production:,}")
-
         return relationships
 
-    def simulate_next_year(
-        self,
-        previous_relationships: List[TradingRelationship],
-        country: Country,
-        farmers: List[Farmer],
-        middlemen: List[Middleman],
-        exporters: List[Exporter],
-        year: int,
-        middleman_geographies: Dict[str, List[str]]
-    ) -> List[TradingRelationship]:
-        """Simulate next year's relationships based on loyalty."""
+    def _adjust_volumes(self, relationships: List[Trade], country: Country):
+        """Vectorized volume adjustment."""
+        eu_relationships = np.array([r for r in relationships if r.sold_to_eu])
+        non_eu_relationships = np.array([r for r in relationships if not r.sold_to_eu])
         
-        logger.info(f"Starting simulation for year {year}")
+        if len(eu_relationships) > 0:
+            current_eu_volume = sum(r.amount_kg for r in eu_relationships)
+            volume_difference = country.exports_to_eu - current_eu_volume
+            largest_eu_idx = np.argmax([r.amount_kg for r in eu_relationships])
+            eu_relationships[largest_eu_idx].amount_kg += volume_difference
         
-        # Create geography mappings
-        geo_to_middlemen = defaultdict(list)
-        for mm_id, geo_ids in middleman_geographies.items():
-            mm = next(m for m in middlemen if m.id == mm_id)
-            for geo_id in geo_ids:
-                geo_to_middlemen[geo_id].append(mm)
-        
-        logger.info(f"Processing {len(farmers)} farmers")
-        
-        # Create lookup dictionaries for quick access
-        middleman_lookup = {m.id: m for m in middlemen}
-        exporter_lookup = {e.id: e for e in exporters}
-        
-        # Process relationships
-        farmer_to_middlemen = {}
-        mm_to_exporters = defaultdict(list)
-        
-        for i, farmer in enumerate(farmers):
-            if i % 100 == 0:  # Log progress every 100 farmers
-                logger.info(f"Processing farmer {i}/{len(farmers)}")
-            
-            prev_rels = [r for r in previous_relationships if r.farmer_id == farmer.id]
-            available_mm = geo_to_middlemen[farmer.geography_id]
-            
-            if not available_mm:
-                logger.warning(f"Farmer {farmer.id} has no available middlemen in geography {farmer.geography_id}")
-                continue
-
-            if prev_rels and farmer.loyalty >= middleman_lookup[prev_rels[0].middleman_id].loyalty:
-                logger.debug(f"Farmer {farmer.id} keeping previous relationships due to loyalty")
-                chosen_mm = [mm for mm in available_mm if any(r.middleman_id == mm.id for r in prev_rels)]
-                if not chosen_mm:
-                    num_mm = max(1, round(country.max_buyers_per_farmer * (1 - farmer.loyalty**2)))
-                    chosen_mm = list(np.random.choice(available_mm, size=min(num_mm, len(available_mm)), replace=False))
-                    logger.debug(f"No previous middlemen available, selected {len(chosen_mm)} new ones")
-            else:
-                num_mm = max(1, round(country.max_buyers_per_farmer * (1 - farmer.loyalty**2)))
-                chosen_mm = list(np.random.choice(available_mm, size=min(num_mm, len(available_mm)), replace=False))
-                logger.debug(f"Farmer {farmer.id} selecting {len(chosen_mm)} new middlemen")
-            
-            farmer_to_middlemen[farmer.id] = chosen_mm
-
-            # Process middleman-exporter relationships
-            for mm in chosen_mm:
-                if mm.id not in mm_to_exporters:
-                    logger.debug(f"Processing middleman {mm.id} exporter relationships")
-                    prev_mm_rels = [r for r in previous_relationships if r.middleman_id == mm.id]
-                    
-                    if prev_mm_rels and mm.loyalty >= exporter_lookup[prev_mm_rels[0].exporter_id].loyalty:
-                        existing_exporter_ids = []
-                        for r in prev_mm_rels:
-                            if r.exporter_id not in existing_exporter_ids:
-                                existing_exporter_ids.append(r.exporter_id)
-                        mm_to_exporters[mm.id].extend([exporter_lookup[e_id] for e_id in existing_exporter_ids])
-                        logger.debug(f"Middleman {mm.id} keeping {len(existing_exporter_ids)} previous exporters")
-                    else:
-                        num_exp = max(1, round(country.max_exporters_per_middleman * (1 - mm.loyalty**2)))
-                        scores = [e.competitiveness for e in exporters]
-                        probs = np.array(scores) / sum(scores)
-                        chosen_exp = list(np.random.choice(exporters, size=min(num_exp, len(exporters)), p=probs, replace=False))
-                        mm_to_exporters[mm.id].extend(chosen_exp)
-                        logger.debug(f"Middleman {mm.id} assigned {len(chosen_exp)} new exporters")
-
-        logger.info("Finished processing all farmers and middlemen")
-        logger.info(f"Generated relationships for {len(farmer_to_middlemen)} farmers and {len(mm_to_exporters)} middlemen")
-
-        # Generate final relationships with volumes
-        return self._generate_relationships(
-            year=year,
-            country=country,
-            farmer_to_middlemen=farmer_to_middlemen,
-            mm_to_exporters=mm_to_exporters,
-            farmers=farmers
-        )
-
+        non_eu_target = country.total_production - country.exports_to_eu
+        if len(non_eu_relationships) > 0:
+            current_non_eu_volume = sum(r.amount_kg for r in non_eu_relationships)
+            volume_difference = non_eu_target - current_non_eu_volume
+            largest_non_eu_idx = np.argmax([r.amount_kg for r in non_eu_relationships])
+            non_eu_relationships[largest_non_eu_idx].amount_kg += volume_difference

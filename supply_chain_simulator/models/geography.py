@@ -18,7 +18,7 @@ class Country(BaseModel):
     farmer_switch_rate: float = 0.20
     middleman_switch_rate: float = 0.30
     exports_to_eu: int = 4_000_000
-    traceability_rate: float = 0.9
+    traceability_rate: float = 0.5
 
     @classmethod
     def from_dict(cls, data: dict) -> 'Country':

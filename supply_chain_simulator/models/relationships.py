@@ -3,7 +3,7 @@ from typing import Optional
 from .base import BaseModel
 
 @dataclass
-class TradingRelationship(BaseModel):
+class Trade(BaseModel):
     year: int
     country_id: str
     farmer_id: str
@@ -13,7 +13,7 @@ class TradingRelationship(BaseModel):
     sold_to_eu: bool
     
     @classmethod
-    def from_dict(cls, data: dict) -> 'TradingRelationship':
+    def from_dict(cls, data: dict) -> 'Trade':
         return cls(**data)
     
     def to_dict(self) -> dict:

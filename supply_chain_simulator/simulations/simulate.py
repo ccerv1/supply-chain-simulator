@@ -73,6 +73,23 @@ class CountrySimulation:
                             current_geos.append(random.choice(available))
                     
                     updates[middleman.id] = current_geos
+
+            # Check that every geography has at least one middleman
+            covered_geos = set()
+            for mm_id, geo_list in updates.items():
+                covered_geos.update(geo_list)
+
+            uncovered_geos = set(g.id for g in geographies) - covered_geos
+            
+            if uncovered_geos and year > 0:
+                # Get previous year assignments for uncovered geographies
+                for geo_id in uncovered_geos:
+                    prev_assignments = self.simulator.trading_registry.get_middleman_geographies(
+                        year - 1, self.country_id, geo_id
+                    )
+                    if prev_assignments:
+                        # Assign to first middleman from previous year
+                        updates[prev_assignments[0]].append(geo_id)
             
             self.middleman_geographies = updates
             return updates
@@ -102,33 +119,19 @@ class CountrySimulation:
             if not self.middleman_geographies:
                 raise ValueError("Middleman geographies not set. Call set_middleman_geographies first.")
 
-            # Generate relationships
-            if year == 0:
-                relationships = self.simulator.create_initial_relationships(
-                    country=country,
-                    farmers=farmers,
-                    middlemen=middlemen,
-                    exporters=exporters,
-                    middleman_geographies=self.middleman_geographies
-                )
-            else:
-                prev_relationships = self.simulator.trading_registry.get_by_year_and_country(year - 1, self.country_id)
-                if not prev_relationships:
-                    raise ValueError(f"No relationships found for year {year-1}")
-                
-                relationships = self.simulator.simulate_next_year(
-                    previous_relationships=prev_relationships,
-                    country=country,
-                    farmers=farmers,
-                    middlemen=middlemen,
-                    exporters=exporters,
-                    year=year,
-                    middleman_geographies=self.middleman_geographies
-                )
+            # Generate trade flows
+            trade_flows = self.simulator.simulate_trade_flows(
+                country=country,
+                farmers=farmers,
+                middlemen=middlemen,
+                exporters=exporters,
+                middleman_geographies=self.middleman_geographies,
+                year=year
+            )
             
             # Save to database
-            self.simulator.trading_registry.create_many(relationships)
-            return relationships
+            self.simulator.trading_registry.create_many(trade_flows)
+            return trade_flows
 
         except Exception as e:
             logger.error(f"Error simulating trading year: {str(e)}", exc_info=True)
