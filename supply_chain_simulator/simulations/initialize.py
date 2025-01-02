@@ -16,12 +16,8 @@ from database.registries import (
     ExporterRegistry,
     TradingRegistry
 )
-from config.settings import (
-    DATA_DIR,
-    FARMER_PLOT_THRESHOLDS,
-    LOGNORMAL_ADJUSTMENT
-)
-from simulations.trade import TradeSimulator
+from config.settings import DATA_DIR
+from config.simulation import FARMER_PLOT_THRESHOLDS, LOGNORMAL_ADJUSTMENT
 
 class CountryInitializer:
     """Handles initialization of a country's supply chain actors."""

@@ -13,7 +13,7 @@ import logging
 
 from models.actors import Farmer, Middleman, Exporter
 from models.geography import Country, Geography
-from models.relationships import Trade
+from supply_chain_simulator.models.trade_flow import TradeFlow
 from database.manager import DatabaseManager
 from database.registries import (
     CountryRegistry,
@@ -45,7 +45,7 @@ class TradeSimulator:
         exporters: List[Exporter],
         middleman_geographies: Dict[str, List[str]],
         year: int = 0
-    ) -> List[Trade]:
+    ) -> List[TradeFlow]:
         """Create initial trading relationships between actors."""
         
         if not middleman_geographies:
@@ -158,7 +158,7 @@ class TradeSimulator:
         farmer_to_middlemen: Dict[str, List[Middleman]],
         mm_to_exporters: Dict[str, List[Exporter]],
         farmers: List[Farmer]
-    ) -> List[Trade]:
+    ) -> List[TradeFlow]:
         """Generate relationships using vectorized operations where possible."""
         relationships = []
         total_eu_volume = 0
@@ -201,7 +201,7 @@ class TradeSimulator:
                             sold_to_eu = True
                             total_eu_volume += exp_volume
                     
-                    relationships.append(Trade(
+                    relationships.append(TradeFlow(
                         year=year,
                         country_id=country.id,
                         farmer_id=farmer.id,
@@ -216,7 +216,7 @@ class TradeSimulator:
         
         return relationships
 
-    def _adjust_volumes(self, relationships: List[Trade], country: Country):
+    def _adjust_volumes(self, relationships: List[TradeFlow], country: Country):
         """Vectorized volume adjustment."""
         eu_relationships = np.array([r for r in relationships if r.sold_to_eu])
         non_eu_relationships = np.array([r for r in relationships if not r.sold_to_eu])

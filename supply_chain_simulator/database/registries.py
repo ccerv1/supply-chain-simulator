@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from models.actors import Farmer, Middleman, Exporter
 from models.geography import Country, Geography
-from models.relationships import Trade
+from supply_chain_simulator.models.trade_flow import TradeFlow
 
 class BaseRegistry:
     """Base class for all registries providing common database operations."""
@@ -132,7 +132,7 @@ class ExporterRegistry(BaseRegistry):
 class TradingRegistry(BaseRegistry):
     """Registry for managing trading relationships."""
     
-    def create_many(self, relationships: List[Trade]) -> None:
+    def create_many(self, relationships: List[TradeFlow]) -> None:
         self.db.execute_many("""
             INSERT INTO trading_flows VALUES (
                 :year, :country_id, :farmer_id, :middleman_id, :exporter_id,
@@ -140,26 +140,26 @@ class TradingRegistry(BaseRegistry):
             )
         """, [r.to_dict() for r in relationships])
     
-    def get_by_year(self, year: int) -> List[Trade]:
+    def get_by_year(self, year: int) -> List[TradeFlow]:
         data = self.db.fetch_all(
             "SELECT * FROM trading_flows WHERE year = ?",
             (year,)
         )
-        return [Trade.from_dict(row) for row in data]
+        return [TradeFlow.from_dict(row) for row in data]
     
-    def get_by_year_and_country(self, year: int, country_id: str) -> List[Trade]:
+    def get_by_year_and_country(self, year: int, country_id: str) -> List[TradeFlow]:
         data = self.db.fetch_all("""
             SELECT * FROM trading_flows 
             WHERE year = ? AND country_id = ?
         """, (year, country_id))
-        return [Trade.from_dict(row) for row in data]
+        return [TradeFlow.from_dict(row) for row in data]
     
-    def get_by_year_and_middleman(self, year: int, middleman_id: str) -> List[Trade]:
+    def get_by_year_and_middleman(self, year: int, middleman_id: str) -> List[TradeFlow]:
         data = self.db.fetch_all("""
             SELECT * FROM trading_flows 
             WHERE year = ? AND middleman_id = ?
         """, (year, middleman_id))
-        return [Trade.from_dict(row) for row in data]
+        return [TradeFlow.from_dict(row) for row in data]
     
     def get_year_summary(self, year: int, country_id: str) -> Dict[str, Any]:
         return self.db.fetch_one("""
