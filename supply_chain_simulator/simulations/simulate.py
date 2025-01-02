@@ -16,9 +16,9 @@ from config.simulation import DEFAULT_RANDOM_SEED
 logger = logging.getLogger(__name__)
 
 class CountrySimulation:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        self.db = DatabaseManager(db_path)
+    def __init__(self, db_manager: DatabaseManager):
+        """Initialize simulation with database manager."""
+        self.db = db_manager
         self.initializer = CountryInitializer(self.db)
         self.simulator = TradeSimulator(self.db)
         self.country_id = None

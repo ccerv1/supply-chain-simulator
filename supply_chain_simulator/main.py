@@ -4,12 +4,10 @@ Main execution script
 """
 
 import logging
-
-from config.settings import DATABASE_DIR
-from config.simulation import COUNTRIES, NUM_YEARS
 from database.manager import DatabaseManager
 from simulations.simulate import CountrySimulation
-
+from config.simulation import COUNTRIES, NUM_YEARS
+from config.config import DB_CONFIG
 
 # Set up logging
 logging.basicConfig(
@@ -20,16 +18,17 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-    sims = {}
+    db_manager = None
     try:
+        # Initialize database first
+        db_manager = DatabaseManager(DB_CONFIG)
+        db_manager.wipe_database()
+        db_manager.initialize_database()
+        
+        sims = {}
         for country in COUNTRIES:   
-            db_path = DATABASE_DIR / f"{country}.db"
-            db = DatabaseManager(db_path)
-            db.wipe_database()
-            
             logger.info(f"**** Initializing country: {country} ****")
-            country_sim = CountrySimulation(db_path)
+            country_sim = CountrySimulation(db_manager)
             country_sim.initialize_country_actors(country_id=country)
             sims[country] = country_sim
 
@@ -44,6 +43,9 @@ def main():
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
         return 1
+    finally:
+        if db_manager:
+            db_manager.close()
     
     return 0
 

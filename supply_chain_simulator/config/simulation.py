@@ -15,16 +15,16 @@ FARMER_PLOT_THRESHOLDS = {
     }
 }
 COUNTRIES = [
-    'BR',
-    'CO',
-    'PE',
-    'VN',
-    'ID',    
-    'ET',
-    'RW',
-    'UG',    
-    'HN',
-    'GT',
+    # 'BR',
+    # 'CO',
+    # 'PE',
+    # 'VN',
+    # 'ID',    
+    # 'ET',
+    # 'RW',
+    # 'UG',    
+    # 'HN',
+    # 'GT',
     'CR'
 ]
 NUM_YEARS = 3

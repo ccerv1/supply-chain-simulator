@@ -1,74 +1,89 @@
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
 from pathlib import Path
 
+from config.config import DB_CONFIG
 from .schemas import SCHEMA_DEFINITIONS
 
 class DatabaseManager:
-    def __init__(self, db_path: str):
-        self.db_path = Path(db_path)
-        self.initialize_database()
-    
-    def initialize_database(self) -> None:
-        """Create database tables if they don't exist."""
-        with self.get_connection() as conn:
+    def __init__(self, connection_params):
+        self.connection_params = connection_params
+        self._conn = None
+        
+    def initialize_database(self):
+        """Initialize the database with required tables."""
+        conn = self.get_connection()
+        with conn.cursor() as cur:
             for table_sql in SCHEMA_DEFINITIONS.values():
-                conn.execute(table_sql)
-    
-    @contextmanager
-    def get_connection(self):
-        """Context manager for database connections."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
+                cur.execute(table_sql)
             conn.commit()
-        except Exception as e:
-            conn.rollback()
-            raise e
-        finally:
-            conn.close()
+    
+    def get_connection(self):
+        """Get a database connection."""
+        if not self._conn:
+            self._conn = psycopg2.connect(**self.connection_params)
+        return self._conn
+    
+    def commit(self):
+        """Commit the current transaction."""
+        if self._conn:
+            self._conn.commit()
+    
+    def rollback(self):
+        """Rollback the current transaction."""
+        if self._conn:
+            self._conn.rollback()
+    
+    def close(self):
+        """Close the database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
     
     def execute(self, query: str, params: tuple = ()) -> None:
         """Execute a query without returning results."""
-        with self.get_connection() as conn:
-            conn.execute(query, params)
+        conn = self.get_connection()
+        with conn.cursor() as cur:
+            cur.execute(query, params)
     
     def execute_many(self, query: str, params: List[tuple]) -> None:
         """Execute many queries in a single transaction."""
-        with self.get_connection() as conn:
-            conn.executemany(query, params)
+        conn = self.get_connection()
+        with conn.cursor() as cur:
+            cur.executemany(query, params)
     
     def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch a single row from the database."""
-        with self.get_connection() as conn:
-            result = conn.execute(query, params).fetchone()
-            return dict(result) if result else None
+        conn = self.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params)
+            return cur.fetchone()
     
     def fetch_all(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
         """Fetch all rows from the database."""
-        with self.get_connection() as conn:
-            results = conn.execute(query, params).fetchall()
-            return [dict(row) for row in results]
+        conn = self.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params)
+            return cur.fetchall()
     
     def wipe_database(self) -> None:
         """Drop all tables in the database."""
-        with self.get_connection() as conn:
-            # Disable foreign key checks temporarily to avoid dependency issues
-            conn.execute("PRAGMA foreign_keys = OFF")
-            
+        conn = self.get_connection()
+        with conn.cursor() as cur:
             # Get all table names
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            cur.execute("""
+                SELECT tablename FROM pg_tables 
+                WHERE schemaname = 'public'
+            """)
+            tables = cur.fetchall()
             
             # Drop each table
             for table in tables:
-                conn.execute(f"DROP TABLE IF EXISTS {table[0]}")
+                cur.execute(f'DROP TABLE IF EXISTS {table[0]} CASCADE')
             
-            # Re-enable foreign key checks
-            conn.execute("PRAGMA foreign_keys = ON")
+            conn.commit()
             
-            # Reinitialize the database with empty tables
-            self.initialize_database()
+        # Reinitialize the database with empty tables
+        self.initialize_database()

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 import json
 import ast
+import logging
 
 from models.actors import Farmer, Middleman, Exporter
 from models.geography import Country, Geography
@@ -43,25 +44,27 @@ class CountryInitializer:
         np.random.seed(DEFAULT_RANDOM_SEED)
 
     def initialize_country(self, country_id: str) -> Country:
-        """Initialize a country's supply chain actors and store in database."""
-        if country_id.lower() not in self.country_codes:
-            raise ValueError(f"Country ID {country_id} not found in mapping")
-
-        # Create and configure country
-        country = self._create_country(country_id)
-        
-        # Create geographies
-        geographies = self._create_geographies(country)
-        
-        # Create supply chain actors
-        farmers = self._create_farmers(country, geographies)
-        middlemen = self._create_middlemen(country)
-        exporters = self._create_exporters(country)
-        
-        # Store everything in database
-        self._save_to_database(country, geographies, farmers, middlemen, exporters)
-        
-        return country
+        """Initialize a new country with all its actors."""
+        try:
+            # First create the country
+            country = self._create_country(country_id)
+            
+            # Then create geographies
+            geographies = self._create_geographies(country)
+            
+            # Then create actors that depend on both
+            farmers = self._create_farmers(country, geographies)
+            middlemen = self._create_middlemen(country)
+            exporters = self._create_exporters(country)
+            
+            # Save everything in the correct order
+            self._save_to_database(country, geographies, farmers, middlemen, exporters)
+            
+            return country
+            
+        except Exception as e:
+            logging.error(f"Error initializing country: {str(e)}")
+            raise
 
     def _load_country_codes(self) -> Dict:
         """Load country code mappings."""
@@ -263,17 +266,42 @@ class CountryInitializer:
             for i in range(country.num_exporters)
         ]
 
-    def _save_to_database(
-        self,
-        country: Country,
-        geographies: List[Geography],
-        farmers: List[Farmer],
-        middlemen: List[Middleman],
-        exporters: List[Exporter]
-    ) -> None:
-        """Save all created objects to the database."""
-        self.country_registry.create(country)
-        self.geography_registry.create_many(geographies)
-        self.farmer_registry.create_many(farmers)
-        self.middleman_registry.create_many(middlemen)
-        self.exporter_registry.create_many(exporters)
+    def _save_to_database(self, country: Country, geographies: List[Geography], 
+                         farmers: List[Farmer], middlemen: List[Middleman], 
+                         exporters: List[Exporter]) -> None:
+        """Save all generated data to the database in the correct order."""
+        try:
+            # First save the country
+            logging.info(f"Saving country: {country.id} - {country.name}")
+            self.country_registry.create(country)
+            
+            # Verify country was saved
+            saved_country = self.country_registry.get_by_id(country.id)
+            if not saved_country:
+                raise Exception(f"Failed to save country {country.id}")
+            logging.info("Country saved successfully")
+            
+            # Then save geographies
+            logging.info(f"Saving {len(geographies)} geographies")
+            self.geography_registry.create_many(geographies)
+            logging.info("Geographies saved successfully")
+            
+            # Then save actors
+            logging.info(f"Saving {len(farmers)} farmers")
+            self.farmer_registry.create_many(farmers)
+            logging.info("Farmers saved successfully")
+            
+            logging.info(f"Saving {len(middlemen)} middlemen")
+            self.middleman_registry.create_many(middlemen)
+            logging.info("Middlemen saved successfully")
+            
+            logging.info(f"Saving {len(exporters)} exporters")
+            self.exporter_registry.create_many(exporters)
+            logging.info("Exporters saved successfully")
+            
+        except Exception as e:
+            logging.error(f"Error saving to database: {str(e)}")
+            # Add transaction rollback
+            if hasattr(self.db, 'rollback'):
+                self.db.rollback()
+            raise

@@ -28,3 +28,4 @@ wheels/
 .ipynb_checkpoints/
 data/_local/
 *.db
+.env

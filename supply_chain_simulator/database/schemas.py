@@ -4,7 +4,7 @@ SCHEMA_DEFINITIONS = {
     'countries': """
         CREATE TABLE IF NOT EXISTS countries (
             id TEXT PRIMARY KEY,
-            name TEXT,
+            name TEXT NOT NULL,
             total_production INTEGER,
             num_farmers INTEGER,
             num_middlemen INTEGER,
