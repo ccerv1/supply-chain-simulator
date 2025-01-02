@@ -104,6 +104,10 @@ class MiddlemanRegistry(BaseRegistry):
     def get_all(self) -> List[Middleman]:
         data = self.db.fetch_all("SELECT * FROM middlemen")
         return [Middleman.from_dict(row) for row in data]
+    
+    def get_by_country(self, country_id: str) -> List[Middleman]:
+        data = self.db.fetch_all("SELECT * FROM middlemen WHERE country_id = ?", (country_id,))
+        return [Middleman.from_dict(row) for row in data]   
 
 
 class ExporterRegistry(BaseRegistry):
@@ -118,6 +122,10 @@ class ExporterRegistry(BaseRegistry):
     
     def get_all(self) -> List[Exporter]:
         data = self.db.fetch_all("SELECT * FROM exporters")
+        return [Exporter.from_dict(row) for row in data]
+
+    def get_by_country(self, country_id: str) -> List[Exporter]:
+        data = self.db.fetch_all("SELECT * FROM exporters WHERE country_id = ?", (country_id,))
         return [Exporter.from_dict(row) for row in data]
 
 

@@ -20,19 +20,12 @@ logger = logging.getLogger(__name__)
 # Configuration
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / 'data'
-OUTPUT_DIR = BASE_DIR / 'output' / datetime.now().strftime('%Y%m%d_%H%M%S')
 DB_PATH = DATA_DIR / 'supply_chain.db'
 
-def setup_directories():
-    """Create necessary directories."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 def main():
     """Main execution function."""
     try:
-        setup_directories()
-        
         # Wipe database before starting
         db = DatabaseManager(DB_PATH)
         logger.info("Wiping database...")
@@ -40,13 +33,13 @@ def main():
         logger.info("Database wiped successfully")
 
         # Initialize country
-        setup = CountrySimulation(DB_PATH)
-        country = setup.initialize_country_actors("CR")
-        
-        # Run simulation for 2 years
-        # simulator = YearlySimulator(DB_PATH)
-        # for year in range(1, 3):  # Simulate years 1 and 2
-        #     simulator.simulate_year("CR", year)
+        country_sim = CountrySimulation(DB_PATH)
+        country_sim.initialize_country_actors(country_id="CR")
+
+        for year in range(0, 3):
+            country_sim.set_middleman_geographies(year)
+            country_sim.simulate_trading_year(year)
+            
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)

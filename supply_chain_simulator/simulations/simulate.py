@@ -10,6 +10,7 @@ from typing import List, Dict
 from database.manager import DatabaseManager
 from simulations.initialize import CountryInitializer
 from simulations.trade import TradeSimulator
+from simulations.middleman_geographies import assign_middlemen_to_geographies
 
 logger = logging.getLogger(__name__)
 
@@ -19,125 +20,115 @@ class CountrySimulation:
         self.db = DatabaseManager(db_path)
         self.initializer = CountryInitializer(self.db)
         self.simulator = TradeSimulator(self.db)
+        self.country_id = None
+        self.middleman_geographies = {}
 
     def initialize_country_actors(self, country_id: str):
         """Initialize a country with basic actors if not already present."""
         logger.info(f"Initializing actors for country: {country_id}")
         
         try:
-            # Check if country is already initialized
+            # Check if country exists
             country = self.initializer.country_registry.get_by_id(country_id)
             if not country:
                 logger.info("Creating new country...")
                 country = self.initializer.initialize_country(country_id)
-            
-            return country
+            self.country_id = country_id
 
         except Exception as e:
             logger.error(f"Error initializing country actors: {str(e)}", exc_info=True)
             raise
 
-    def initialize_middleman_geographies(self, country_id: str):
-        """Create initial middleman-geography assignments through trading relationships."""
-        logger.info(f"Initializing middleman geographies for country: {country_id}")
+    def set_middleman_geographies(self, year: int, geography_change_rate: float = 0.1):
+        """Set or update middleman-geography assignments."""
+        logger.info(f"Setting middleman geographies for year {year}")
+        
+        if not self.country_id:
+            raise ValueError("Country ID not set. Call initialize_country_actors first.")
         
         try:
-            # Get all required actors
-            geographies = self.initializer.geography_registry.get_by_country(country_id)
-            farmers = self.initializer.farmer_registry.get_all_by_country(country_id)
-            middlemen = self.initializer.middleman_registry.get_all()
-            exporters = self.initializer.exporter_registry.get_all()
+            middlemen = self.initializer.middleman_registry.get_by_country(self.country_id)
+            geographies = self.initializer.geography_registry.get_by_country(self.country_id)
             
-            # Check for existing year 0 relationships
-            initial_relationships = self.simulator.trading_registry.get_by_year_and_country(0, country_id)
-            if not initial_relationships:
-                country = self.initializer.country_registry.get_by_id(country_id)
-                logger.info("Creating initial trading relationships...")
-                initial_relationships = self.simulator.create_initial_relationships(
-                    country=country,
-                    farmers=farmers,
-                    middlemen=middlemen,
-                    exporters=exporters,
-                    geographies=geographies
-                )
-                self.simulator.trading_registry.create_many(initial_relationships)
-                logger.info(f"Created {len(initial_relationships)} initial relationships")
+            if year == 0:
+                # Initial assignment - use the imported function
+                geo_to_middlemen = assign_middlemen_to_geographies(geographies, middlemen)
+                updates = {m.id: [] for m in middlemen}
+                for geo_id, mm_list in geo_to_middlemen.items():
+                    for mm in mm_list:
+                        updates[mm.id].append(geo_id)
+            else:
+                # Update based on previous year
+                updates = {}
+                for middleman in middlemen:
+                    current_geos = self.simulator.trading_registry.get_middleman_geographies(
+                        year - 1, self.country_id, middleman.id
+                    )
+                    
+                    if random.random() < geography_change_rate:
+                        # Randomly change one geography
+                        available = [g.id for g in geographies if g.id not in current_geos]
+                        if available and current_geos:
+                            current_geos.remove(random.choice(current_geos))
+                            current_geos.append(random.choice(available))
+                    
+                    updates[middleman.id] = current_geos
             
-            return initial_relationships
-
-        except Exception as e:
-            logger.error(f"Error initializing middleman geographies: {str(e)}", exc_info=True)
-            raise
-
-    def update_middleman_geographies(self, country_id: str, year: int, geography_change_rate: float = 0.1):
-        """Randomly update which geographies middlemen are assigned to."""
-        logger.info(f"Updating middleman geography assignments for year {year}")
-        
-        try:
-            middlemen = self.initializer.middleman_registry.get_all()
-            geographies = self.initializer.geography_registry.get_by_country(country_id)
-            
-            updates = {}
-            for middleman in middlemen:
-                current_geographies = self.simulator.trading_registry.get_middleman_geographies(
-                    year - 1, country_id, middleman.id
-                )
-                
-                # Randomly decide if this middleman will change geographies
-                if random.random() < geography_change_rate:
-                    available_geographies = [g.id for g in geographies if g.id not in current_geographies]
-                    if available_geographies:
-                        # Remove one random geography and add another
-                        if current_geographies:
-                            current_geographies.remove(random.choice(current_geographies))
-                        current_geographies.append(random.choice(available_geographies))
-                
-                updates[middleman.id] = current_geographies
-            
+            self.middleman_geographies = updates
             return updates
 
         except Exception as e:
-            logger.error(f"Error updating middleman geographies: {str(e)}", exc_info=True)
+            logger.error(f"Error setting middleman geographies: {str(e)}", exc_info=True)
             raise
 
-    def simulate_trading_year(self, country_id: str, year: int):
+    def simulate_trading_year(self, year: int):
         """Simulate trading relationships for a specific year."""
         logger.info(f"Simulating trading for year {year}")
         
         try:
-            # Check if year already simulated
-            existing_relationships = self.simulator.trading_registry.get_by_year(year)
-            if existing_relationships:
+            # Check for existing relationships
+            existing = self.simulator.trading_registry.get_by_year_and_country(year, self.country_id)
+            if existing:
                 logger.info(f"Year {year} already simulated.")
-                return existing_relationships
+                return existing
 
-            # Get previous year's relationships
-            previous_relationships = self.simulator.trading_registry.get_by_year_and_country(year - 1, country_id)
-            if not previous_relationships:
-                raise ValueError(f"No relationships found for previous year {year-1}")
-
-            # Get all required actors
-            country = self.initializer.country_registry.get_by_id(country_id)
-            farmers = self.initializer.farmer_registry.get_all_by_country(country_id)
-            middlemen = self.initializer.middleman_registry.get_all()
-            exporters = self.initializer.exporter_registry.get_all()
-
-            # Create new relationships
-            logger.info(f"Creating new relationships for year {year}")
-            new_relationships = self.simulator.simulate_next_year(
-                previous_relationships=previous_relationships,
-                country=country,
-                farmers=farmers,
-                middlemen=middlemen,
-                exporters=exporters,
-                year=year
-            )
+            # Get actors
+            country = self.initializer.country_registry.get_by_id(self.country_id)
+            farmers = self.initializer.farmer_registry.get_all_by_country(self.country_id)
+            middlemen = self.initializer.middleman_registry.get_by_country(self.country_id)
+            exporters = self.initializer.exporter_registry.get_by_country(self.country_id)
             
-            # Persist to database
-            logger.info(f"Persisting {len(new_relationships)} relationships")
-            self.simulator.trading_registry.create_many(new_relationships)
+            # Use the already set middleman geographies
+            if not self.middleman_geographies:
+                raise ValueError("Middleman geographies not set. Call set_middleman_geographies first.")
+
+            # Generate relationships
+            if year == 0:
+                relationships = self.simulator.create_initial_relationships(
+                    country=country,
+                    farmers=farmers,
+                    middlemen=middlemen,
+                    exporters=exporters,
+                    middleman_geographies=self.middleman_geographies
+                )
+            else:
+                prev_relationships = self.simulator.trading_registry.get_by_year_and_country(year - 1, self.country_id)
+                if not prev_relationships:
+                    raise ValueError(f"No relationships found for year {year-1}")
+                
+                relationships = self.simulator.simulate_next_year(
+                    previous_relationships=prev_relationships,
+                    country=country,
+                    farmers=farmers,
+                    middlemen=middlemen,
+                    exporters=exporters,
+                    year=year,
+                    middleman_geographies=self.middleman_geographies
+                )
             
-            return new_relationships
+            # Save to database
+            self.simulator.trading_registry.create_many(relationships)
+            return relationships
 
         except Exception as e:
             logger.error(f"Error simulating trading year: {str(e)}", exc_info=True)

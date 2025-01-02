@@ -43,47 +43,47 @@ class TradeSimulator:
         farmers: List[Farmer],
         middlemen: List[Middleman],
         exporters: List[Exporter],
-        geographies: List[Geography]
+        middleman_geographies: Dict[str, List[str]]
     ) -> List[TradingRelationship]:
-        """Create initial trading relationships between supply chain actors."""
+        """Create initial trading relationships between actors."""
         
-        # 1. Assign middlemen to geographies
-        geo_to_middlemen = assign_middlemen_to_geographies(geographies, middlemen)
-        middleman_to_geos = {m.id: [] for m in middlemen}
-        for geo_id, mm_list in geo_to_middlemen.items():
-            for mm in mm_list:
-                middleman_to_geos[mm.id].append(geo_id)
+        if not middleman_geographies:
+            raise ValueError("No middleman geography assignments provided")
 
-        # 2. Create middleman-exporter relationships
+        # Create geo-to-middlemen mapping
+        geo_to_middlemen = defaultdict(list)
+        for mm_id, geo_ids in middleman_geographies.items():
+            mm = next(m for m in middlemen if m.id == mm_id)
+            for geo_id in geo_ids:
+                geo_to_middlemen[geo_id].append(mm)
+
+        # Assign middlemen to exporters
         mm_to_exporters = self._assign_middlemen_to_exporters(
             middlemen=middlemen,
             exporters=exporters,
-            middleman_to_geos=middleman_to_geos,
             country=country
         )
 
-        # 3. Create farmer-middleman relationships
+        # Assign farmers to middlemen
         farmer_to_middlemen = self._assign_farmers_to_middlemen(
             farmers=farmers,
             geo_to_middlemen=geo_to_middlemen,
             country=country
         )
 
-        # 4. Generate all relationships with volumes
-        relationships = self._generate_trading_relationships(
+        # Generate relationships with volumes
+        return self._generate_relationships(
+            year=0,
             country=country,
             farmer_to_middlemen=farmer_to_middlemen,
             mm_to_exporters=mm_to_exporters,
             farmers=farmers
         )
 
-        return relationships
-
     def _assign_middlemen_to_exporters(
         self,
         middlemen: List[Middleman],
         exporters: List[Exporter],
-        middleman_to_geos: Dict[str, List[str]],
         country: Country
     ) -> Dict[str, List[Exporter]]:
         """Assign exporters to middlemen based on loyalty and geography coverage."""
@@ -97,7 +97,7 @@ class TradeSimulator:
             ))
             
             # Weight exporters by competitiveness and middleman's geography coverage
-            geo_coverage = len(middleman_to_geos[mm.id])
+            geo_coverage = len(mm_to_exporters.get(mm.id, []))
             exporter_scores = [
                 e.competitiveness * (1 + geo_coverage/len(exporters))
                 for e in exporters
@@ -145,8 +145,9 @@ class TradeSimulator:
         
         return farmer_to_middlemen
 
-    def _generate_trading_relationships(
+    def _generate_relationships(
         self,
+        year: int,
         country: Country,
         farmer_to_middlemen: Dict[str, List[Middleman]],
         mm_to_exporters: Dict[str, List[Exporter]],
@@ -189,7 +190,7 @@ class TradeSimulator:
                             total_eu_volume += exp_volume
 
                     relationships.append(TradingRelationship(
-                        year=0,
+                        year=year,
                         country_id=country.id,
                         farmer_id=farmer.id,
                         middleman_id=mm.id,
@@ -231,4 +232,93 @@ class TradeSimulator:
             logger.warning(f"Total volume mismatch: {final_total_volume:,} vs target {country.total_production:,}")
 
         return relationships
+
+    def simulate_next_year(
+        self,
+        previous_relationships: List[TradingRelationship],
+        country: Country,
+        farmers: List[Farmer],
+        middlemen: List[Middleman],
+        exporters: List[Exporter],
+        year: int,
+        middleman_geographies: Dict[str, List[str]]
+    ) -> List[TradingRelationship]:
+        """Simulate next year's relationships based on loyalty."""
+        
+        logger.info(f"Starting simulation for year {year}")
+        
+        # Create geography mappings
+        geo_to_middlemen = defaultdict(list)
+        for mm_id, geo_ids in middleman_geographies.items():
+            mm = next(m for m in middlemen if m.id == mm_id)
+            for geo_id in geo_ids:
+                geo_to_middlemen[geo_id].append(mm)
+        
+        logger.info(f"Processing {len(farmers)} farmers")
+        
+        # Create lookup dictionaries for quick access
+        middleman_lookup = {m.id: m for m in middlemen}
+        exporter_lookup = {e.id: e for e in exporters}
+        
+        # Process relationships
+        farmer_to_middlemen = {}
+        mm_to_exporters = defaultdict(list)
+        
+        for i, farmer in enumerate(farmers):
+            if i % 100 == 0:  # Log progress every 100 farmers
+                logger.info(f"Processing farmer {i}/{len(farmers)}")
+            
+            prev_rels = [r for r in previous_relationships if r.farmer_id == farmer.id]
+            available_mm = geo_to_middlemen[farmer.geography_id]
+            
+            if not available_mm:
+                logger.warning(f"Farmer {farmer.id} has no available middlemen in geography {farmer.geography_id}")
+                continue
+
+            if prev_rels and farmer.loyalty >= middleman_lookup[prev_rels[0].middleman_id].loyalty:
+                logger.debug(f"Farmer {farmer.id} keeping previous relationships due to loyalty")
+                chosen_mm = [mm for mm in available_mm if any(r.middleman_id == mm.id for r in prev_rels)]
+                if not chosen_mm:
+                    num_mm = max(1, round(country.max_buyers_per_farmer * (1 - farmer.loyalty**2)))
+                    chosen_mm = list(np.random.choice(available_mm, size=min(num_mm, len(available_mm)), replace=False))
+                    logger.debug(f"No previous middlemen available, selected {len(chosen_mm)} new ones")
+            else:
+                num_mm = max(1, round(country.max_buyers_per_farmer * (1 - farmer.loyalty**2)))
+                chosen_mm = list(np.random.choice(available_mm, size=min(num_mm, len(available_mm)), replace=False))
+                logger.debug(f"Farmer {farmer.id} selecting {len(chosen_mm)} new middlemen")
+            
+            farmer_to_middlemen[farmer.id] = chosen_mm
+
+            # Process middleman-exporter relationships
+            for mm in chosen_mm:
+                if mm.id not in mm_to_exporters:
+                    logger.debug(f"Processing middleman {mm.id} exporter relationships")
+                    prev_mm_rels = [r for r in previous_relationships if r.middleman_id == mm.id]
+                    
+                    if prev_mm_rels and mm.loyalty >= exporter_lookup[prev_mm_rels[0].exporter_id].loyalty:
+                        existing_exporter_ids = []
+                        for r in prev_mm_rels:
+                            if r.exporter_id not in existing_exporter_ids:
+                                existing_exporter_ids.append(r.exporter_id)
+                        mm_to_exporters[mm.id].extend([exporter_lookup[e_id] for e_id in existing_exporter_ids])
+                        logger.debug(f"Middleman {mm.id} keeping {len(existing_exporter_ids)} previous exporters")
+                    else:
+                        num_exp = max(1, round(country.max_exporters_per_middleman * (1 - mm.loyalty**2)))
+                        scores = [e.competitiveness for e in exporters]
+                        probs = np.array(scores) / sum(scores)
+                        chosen_exp = list(np.random.choice(exporters, size=min(num_exp, len(exporters)), p=probs, replace=False))
+                        mm_to_exporters[mm.id].extend(chosen_exp)
+                        logger.debug(f"Middleman {mm.id} assigned {len(chosen_exp)} new exporters")
+
+        logger.info("Finished processing all farmers and middlemen")
+        logger.info(f"Generated relationships for {len(farmer_to_middlemen)} farmers and {len(mm_to_exporters)} middlemen")
+
+        # Generate final relationships with volumes
+        return self._generate_relationships(
+            year=year,
+            country=country,
+            farmer_to_middlemen=farmer_to_middlemen,
+            mm_to_exporters=mm_to_exporters,
+            farmers=farmers
+        )
 
