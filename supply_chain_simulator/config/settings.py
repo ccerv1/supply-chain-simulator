@@ -2,10 +2,8 @@ from pathlib import Path
 
 # Directory settings
 BASE_DIR = Path(__file__).parent.parent.parent
-DATA_DIR = BASE_DIR / 'data'
-
-# Database settings
-DB_PATH = DATA_DIR / 'supply_chain.db'
+DATA_DIR = BASE_DIR / 'data' 
+DATABASE_DIR = DATA_DIR / 'db'
 
 # Data file paths
 COUNTRY_CODES_PATH = DATA_DIR / 'country_codes.json'

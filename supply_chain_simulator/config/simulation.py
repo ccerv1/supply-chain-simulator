@@ -14,4 +14,17 @@ FARMER_PLOT_THRESHOLDS = {
         'plots': 3
     }
 }
-
+COUNTRIES = [
+    'BR',
+    'CO',
+    'PE',
+    'VN',
+    'ID',    
+    'ET',
+    'RW',
+    'UG',    
+    'HN',
+    'GT',
+    'CR'
+]
+NUM_YEARS = 3

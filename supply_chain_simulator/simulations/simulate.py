@@ -11,6 +11,7 @@ from database.manager import DatabaseManager
 from simulations.initialize import CountryInitializer
 from simulations.trade import TradeSimulator
 from simulations.middleman_geographies import assign_middlemen_to_geographies
+from config.simulation import DEFAULT_RANDOM_SEED
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,10 @@ class CountrySimulation:
         self.simulator = TradeSimulator(self.db)
         self.country_id = None
         self.middleman_geographies = {}
+        random.seed(DEFAULT_RANDOM_SEED)
 
     def initialize_country_actors(self, country_id: str):
         """Initialize a country with basic actors if not already present."""
-        logger.info(f"Initializing actors for country: {country_id}")
         
         try:
             # Check if country exists
@@ -41,7 +42,6 @@ class CountrySimulation:
 
     def set_middleman_geographies(self, year: int, geography_change_rate: float = 0.1):
         """Set or update middleman-geography assignments."""
-        logger.info(f"Setting middleman geographies for year {year}")
         
         if not self.country_id:
             raise ValueError("Country ID not set. Call initialize_country_actors first.")

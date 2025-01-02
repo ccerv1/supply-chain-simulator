@@ -24,6 +24,11 @@ from database.registries import (
     TradingRegistry
 )
 from simulations.middleman_geographies import assign_middlemen_to_geographies
+from config.simulation import (
+    DEFAULT_RANDOM_SEED,
+    MAX_BUYERS_PER_FARMER,
+    LOGNORMAL_ADJUSTMENT
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +41,7 @@ class TradeSimulator:
         self.middleman_registry = MiddlemanRegistry(db_manager)
         self.exporter_registry = ExporterRegistry(db_manager)
         self.trading_registry = TradingRegistry(db_manager)
+        np.random.seed(DEFAULT_RANDOM_SEED)
 
     def simulate_trade_flows(
         self,
@@ -137,7 +143,7 @@ class TradeSimulator:
             # Vectorized loyalty calculations
             loyalties = np.array([f.loyalty for f in geo_farmers_list])
             num_buyers = np.maximum(1, np.round(
-                country.max_buyers_per_farmer * (1 - loyalties**2)
+                MAX_BUYERS_PER_FARMER * (1 - loyalties**2)
             )).astype(int)
             
             # Batch assignment for all farmers in this geography
@@ -192,6 +198,8 @@ class TradeSimulator:
                 
                 for exp, exp_ratio in zip(exporters, exp_split):
                     exp_volume = mm_volume * exp_ratio
+                    if exp_volume < 1:
+                        continue
                     
                     # EU sales determination
                     sold_to_eu = False

@@ -27,4 +27,4 @@ wheels/
 .pytest_cache/
 .ipynb_checkpoints/
 data/_local/
-data/supply_chain.db
+*.db

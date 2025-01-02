@@ -17,7 +17,11 @@ from database.registries import (
     TradingRegistry
 )
 from config.settings import DATA_DIR
-from config.simulation import FARMER_PLOT_THRESHOLDS, LOGNORMAL_ADJUSTMENT
+from config.simulation import (
+    DEFAULT_RANDOM_SEED,
+    LOGNORMAL_ADJUSTMENT,
+    FARMER_PLOT_THRESHOLDS
+)
 
 class CountryInitializer:
     """Handles initialization of a country's supply chain actors."""
@@ -35,6 +39,8 @@ class CountryInitializer:
         self.country_codes = self._load_country_codes()
         self.country_assumptions = self._load_country_assumptions()
         self.geography_data = self._load_geography_data()
+
+        np.random.seed(DEFAULT_RANDOM_SEED)
 
     def initialize_country(self, country_id: str) -> Country:
         """Initialize a country's supply chain actors and store in database."""
@@ -162,7 +168,6 @@ class CountryInitializer:
         if geography.num_farmers == 0 or geography.total_production_kg == 0:
             return []
 
-        # Generate production amounts
         production = np.random.lognormal(
             mean=np.log(geography.total_production_kg / geography.num_farmers) - LOGNORMAL_ADJUSTMENT,
             sigma=country.farmer_production_sigma,

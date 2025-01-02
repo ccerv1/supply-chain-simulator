@@ -1,23 +1,25 @@
 from typing import List, Dict
 import numpy as np
-import ast
 from collections import defaultdict
-from scipy.spatial.distance import cdist
 
 from models.geography import Geography
 from models.actors import Middleman
+from config.simulation import (
+    DEFAULT_RANDOM_SEED,
+    MIN_MIDDLEMEN_PER_GEOGRAPHY,
+    MIN_MIDDLEMEN_PER_PRODUCING_AREA
+)
 
 
 def assign_middlemen_to_geographies(
     geographies: List[Geography],
-    middlemen: List[Middleman],
-    random_seed: int = 24
+    middlemen: List[Middleman]
 ) -> Dict[str, List[Middleman]]:
     """
     Assign middlemen to geographies based on producing areas and competitiveness.
     Ensures every geography has at least two middlemen.
     """
-    np.random.seed(random_seed)
+    np.random.seed(DEFAULT_RANDOM_SEED)
 
     # Group geographies by producing area
     producing_areas = defaultdict(list)
@@ -30,7 +32,7 @@ def assign_middlemen_to_geographies(
         area_weights[area] = sum(geo.num_farmers for geo in geos)
     
     # Validate we have enough middlemen for minimum coverage
-    min_middlemen_needed = len(producing_areas) * 4  # 4 per producing area
+    min_middlemen_needed = len(producing_areas) * MIN_MIDDLEMEN_PER_PRODUCING_AREA
     if len(middlemen) < min_middlemen_needed:
         raise ValueError(
             f"Not enough middlemen ({len(middlemen)}) to ensure minimum coverage "
@@ -43,12 +45,12 @@ def assign_middlemen_to_geographies(
 
     # Ensure minimum 4 middlemen per producing area
     for area in producing_areas.keys():
-        if len(remaining_middlemen) < 4:
+        if len(remaining_middlemen) < MIN_MIDDLEMEN_PER_PRODUCING_AREA:
             raise ValueError(f"Not enough remaining middlemen to assign to area {area}")
             
         selected = np.random.choice(
             remaining_middlemen,
-            size=min(4, len(remaining_middlemen)),
+            size=min(MIN_MIDDLEMEN_PER_PRODUCING_AREA, len(remaining_middlemen)),
             replace=False
         )
         area_middlemen[area].extend(selected)
@@ -56,9 +58,9 @@ def assign_middlemen_to_geographies(
             remaining_middlemen.remove(m)
 
     # Distribute remaining middlemen by farmer weights
-    if remaining_middlemen:  # Only if we have middlemen left
+    if remaining_middlemen:
         total_farmers = sum(area_weights.values())
-        if total_farmers > 0:  # Prevent division by zero
+        if total_farmers > 0:
             area_probabilities = {
                 area: farmers / total_farmers
                 for area, farmers in area_weights.items()
@@ -99,9 +101,9 @@ def assign_middlemen_to_geographies(
                 for geo in selected_geos:
                     geo_to_middlemen[geo.id].append(middleman)
 
-    # Ensure minimum coverage (2 middlemen per geography)
+    # Ensure minimum coverage
     for geo_id, assigned_mms in geo_to_middlemen.items():
-        if len(assigned_mms) < 2:
+        if len(assigned_mms) < MIN_MIDDLEMEN_PER_GEOGRAPHY:
             geo = next(g for g in geographies if g.id == geo_id)
             area = geo.producing_area_name
             area_mids = area_middlemen[area]
@@ -109,8 +111,8 @@ def assign_middlemen_to_geographies(
             # Find unassigned middlemen for this geography
             unassigned = [m for m in area_mids if m not in assigned_mms]
             
-            # Add middlemen until we have at least 2
-            while len(assigned_mms) < 2 and unassigned:
+            # Add middlemen until we have at least minimum coverage
+            while len(assigned_mms) < MIN_MIDDLEMEN_PER_GEOGRAPHY and unassigned:
                 # Add the most competitive unassigned middleman
                 next_mm = max(unassigned, key=lambda m: m.competitiveness)
                 assigned_mms.append(next_mm)
