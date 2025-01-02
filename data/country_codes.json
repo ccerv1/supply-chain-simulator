@@ -1,0 +1,130 @@
+{
+    "au": {
+        "short": "AUS",
+        "full": "Australia"
+    },
+    "bi": {
+        "short": "BDI",
+        "full": "Burundi"
+    },
+    "bo": {
+        "short": "BOL",
+        "full": "Bolivia"
+    },
+    "br": {
+        "short": "BRA",
+        "full": "Brazil"
+    },
+    "cd": {
+        "short": "COD",
+        "full": "Democratic Republic of the Congo"
+    },
+    "ci": {
+        "short": "CIV",
+        "full": "Côte d'Ivoire"
+    },
+    "cn": {
+        "short": "CHN",
+        "full": "China"
+    },
+    "co": {
+        "short": "COL",
+        "full": "Colombia"
+    },
+    "cr": {
+        "short": "CRI",
+        "full": "Costa Rica"
+    },
+    "ec": {
+        "short": "ECU",
+        "full": "Ecuador"
+    },
+    "et": {
+        "short": "ETH",
+        "full": "Ethiopia"
+    },
+    "gt": {
+        "short": "GTM",
+        "full": "Guatemala"
+    },
+    "hn": {
+        "short": "HND",
+        "full": "Honduras"
+    },
+    "id": {
+        "short": "IDN",
+        "full": "Indonesia"
+    },
+    "in": {
+        "short": "IND",
+        "full": "India"
+    },
+    "ke": {
+        "short": "KEN",
+        "full": "Kenya"
+    },
+    "la": {
+        "short": "LAO",
+        "full": "Laos"
+    },
+    "mx": {
+        "short": "MEX",
+        "full": "Mexico"
+    },
+    "my": {
+        "short": "MYS",
+        "full": "Malaysia"
+    },
+    "ni": {
+        "short": "NIC",
+        "full": "Nicaragua"
+    },
+    "pa": {
+        "short": "PAN",
+        "full": "Panama"
+    },
+    "pe": {
+        "short": "PER",
+        "full": "Peru"
+    },
+    "pg": {
+        "short": "PNG",
+        "full": "Papua New Guinea"
+    },
+    "rw": {
+        "short": "RWA",
+        "full": "Rwanda"
+    },
+    "sv": {
+        "short": "SLV",
+        "full": "El Salvador"
+    },
+    "th": {
+        "short": "THA",
+        "full": "Thailand"
+    },
+    "tl": {
+        "short": "TLS",
+        "full": "Timor-Leste"
+    },
+    "tz": {
+        "short": "TZA",
+        "full": "Tanzania"
+    },
+    "ug": {
+        "short": "UGA",
+        "full": "Uganda"
+    },
+    "vn": {
+        "short": "VNM",
+        "full": "Vietnam"
+    },
+    "ye": {
+        "short": "YEM",
+        "full": "Yemen"
+    },
+    "zm": {
+        "short": "ZMB",
+        "full": "Zambia"
+    }
+}
