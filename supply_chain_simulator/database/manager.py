@@ -47,12 +47,14 @@ class DatabaseManager:
         conn = self.get_connection()
         with conn.cursor() as cur:
             cur.execute(query, params)
+            conn.commit()
     
     def execute_many(self, query: str, params: List[tuple]) -> None:
         """Execute many queries in a single transaction."""
         conn = self.get_connection()
         with conn.cursor() as cur:
             cur.executemany(query, params)
+            conn.commit()
     
     def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch a single row from the database."""

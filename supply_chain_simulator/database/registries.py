@@ -56,23 +56,28 @@ class GeographyRegistry(BaseRegistry):
     """Registry for managing Geography records."""
     
     def create_many(self, geographies: List[Geography]) -> None:
-        self.db.execute_many("""
-            INSERT INTO geographies (
-                id, name, country_id, centroid, producing_area_name,
-                num_farmers, total_production_kg, primary_crop
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, [
-            (
-                g.id,
-                g.name,
-                g.country_id,
-                g.centroid,
-                g.producing_area_name,
-                g.num_farmers,
-                g.total_production_kg,
-                g.primary_crop
-            ) for g in geographies
-        ])
+        try:
+            self.db.execute_many("""
+                INSERT INTO geographies (
+                    id, name, country_id, centroid, producing_area_name,
+                    num_farmers, total_production_kg, primary_crop
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, [
+                (
+                    g.id,
+                    g.name,
+                    g.country_id,
+                    g.centroid,
+                    g.producing_area_name,
+                    g.num_farmers,
+                    g.total_production_kg,
+                    g.primary_crop
+                ) for g in geographies
+            ])
+            self.db.commit()  # Ensure commit
+        except Exception as e:
+            self.db.rollback()
+            raise
     
     def get_by_country(self, country_id: str) -> List[Geography]:
         data = self.db.fetch_all(
@@ -95,21 +100,26 @@ class FarmerRegistry(BaseRegistry):
     """Registry for managing Farmer records."""
     
     def create_many(self, farmers: List[Farmer]) -> None:
-        self.db.execute_many("""
-            INSERT INTO farmers (
-                id, geography_id, country_id, num_plots,
-                production_amount, loyalty
-            ) VALUES (%s, %s, %s, %s, %s, %s)
-        """, [
-            (
-                f.id,
-                f.geography_id,
-                f.country_id,
-                f.num_plots,
-                f.production_amount,
-                f.loyalty
-            ) for f in farmers
-        ])
+        try:
+            self.db.execute_many("""
+                INSERT INTO farmers (
+                    id, geography_id, country_id, num_plots,
+                    production_amount, loyalty
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+            """, [
+                (
+                    f.id,
+                    f.geography_id,
+                    f.country_id,
+                    f.num_plots,
+                    f.production_amount,
+                    f.loyalty
+                ) for f in farmers
+            ])
+            self.db.commit()  # Ensure commit
+        except Exception as e:
+            self.db.rollback()
+            raise
     
     def get_by_geography(self, geography_id: str) -> List[Farmer]:
         data = self.db.fetch_all(
@@ -132,18 +142,23 @@ class MiddlemanRegistry(BaseRegistry):
     """Registry for managing Middleman records."""
     
     def create_many(self, middlemen: List[Middleman]) -> None:
-        self.db.execute_many("""
-            INSERT INTO middlemen (
-                id, country_id, competitiveness, loyalty
-            ) VALUES (%s, %s, %s, %s)
-        """, [
-            (
-                m.id,
-                m.country_id,
-                m.competitiveness,
-                m.loyalty
-            ) for m in middlemen
-        ])
+        try:
+            self.db.execute_many("""
+                INSERT INTO middlemen (
+                    id, country_id, competitiveness, loyalty
+                ) VALUES (%s, %s, %s, %s)
+            """, [
+                (
+                    m.id,
+                    m.country_id,
+                    m.competitiveness,
+                    m.loyalty
+                ) for m in middlemen
+            ])
+            self.db.commit()  # Ensure commit
+        except Exception as e:
+            self.db.rollback()
+            raise
     
     def get_all(self) -> List[Middleman]:
         data = self.db.fetch_all("SELECT * FROM middlemen")
@@ -158,20 +173,25 @@ class ExporterRegistry(BaseRegistry):
     """Registry for managing Exporter records."""
     
     def create_many(self, exporters: List[Exporter]) -> None:
-        self.db.execute_many("""
-            INSERT INTO exporters (
-                id, country_id, competitiveness,
-                eu_preference, loyalty
-            ) VALUES (%s, %s, %s, %s, %s)
-        """, [
-            (
-                e.id,
-                e.country_id,
-                e.competitiveness,
-                e.eu_preference,
-                e.loyalty
-            ) for e in exporters
-        ])
+        try:
+            self.db.execute_many("""
+                INSERT INTO exporters (
+                    id, country_id, competitiveness,
+                    eu_preference, loyalty
+                ) VALUES (%s, %s, %s, %s, %s)
+            """, [
+                (
+                    e.id,
+                    e.country_id,
+                    e.competitiveness,
+                    e.eu_preference,
+                    e.loyalty
+                ) for e in exporters
+            ])
+            self.db.commit()  # Ensure commit
+        except Exception as e:
+            self.db.rollback()
+            raise
     
     def get_all(self) -> List[Exporter]:
         data = self.db.fetch_all("SELECT * FROM exporters")

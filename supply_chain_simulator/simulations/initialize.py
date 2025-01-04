@@ -151,59 +151,50 @@ class CountryInitializer:
         
         return geographies
 
-    def _create_farmers(
-        self, 
-        country: Country, 
-        geographies: List[Geography]
-    ) -> List[Farmer]:
+    def _create_farmers(self, country: Country, geographies: List[Geography]) -> List[Farmer]:
         """Create farmer objects for all geographies."""
         farmers = []
+        farmer_counter = 0
+        
         for geography in geographies:
-            farmers.extend(self._create_farmers_for_geography(country, geography))
-        return farmers
-
-    def _create_farmers_for_geography(
-        self, 
-        country: Country, 
-        geography: Geography
-    ) -> List[Farmer]:
-        """Create farmer objects for a specific geography."""
-        if geography.num_farmers == 0 or geography.total_production_kg == 0:
-            return []
-
-        production = np.random.lognormal(
-            mean=np.log(geography.total_production_kg / geography.num_farmers) - LOGNORMAL_ADJUSTMENT,
-            sigma=country.farmer_production_sigma,
-            size=geography.num_farmers
-        )
-        
-        # Normalize to match total production
-        production = production * (geography.total_production_kg / production.sum())
-        production = np.round(production).astype(int)
-        
-        # Adjust for rounding errors
-        diff = geography.total_production_kg - production.sum()
-        if diff != 0:
-            production[production.argmax()] += diff
-
-        # Calculate percentiles for plot assignment
-        percentiles = (production / production.sum()).argsort() / len(production)
-        
-        farmers = []
-        for i in range(geography.num_farmers):
-            num_plots = self._calculate_num_plots(percentiles[i])
-            loyalty = np.clip(np.random.normal(0.5, 0.25), 0, 1)
+            if geography.num_farmers == 0 or geography.total_production_kg == 0:
+                continue
             
-            farmer = Farmer(
-                id=f"{geography.id}_F{i:06d}",
-                geography_id=geography.id,
-                country_id=country.id,
-                num_plots=int(num_plots),
-                production_amount=float(production[i]),
-                loyalty=float(loyalty)
+            # Generate production values for this geography's farmers
+            production = np.random.lognormal(
+                mean=np.log(geography.total_production_kg / geography.num_farmers) - LOGNORMAL_ADJUSTMENT,
+                sigma=country.farmer_production_sigma,
+                size=geography.num_farmers
             )
-            farmers.append(farmer)
+            
+            # Normalize to match total production
+            production = production * (geography.total_production_kg / production.sum())
+            production = np.round(production).astype(int)
+            
+            # Adjust for rounding errors
+            diff = geography.total_production_kg - production.sum()
+            if diff != 0:
+                production[production.argmax()] += diff
 
+            # Calculate percentiles for plot assignment
+            percentiles = (production / production.sum()).argsort() / len(production)
+            
+            # Create farmers with sequential IDs at country level
+            for i in range(geography.num_farmers):
+                num_plots = self._calculate_num_plots(percentiles[i])
+                loyalty = np.clip(np.random.normal(0.5, 0.25), 0, 1)
+                
+                farmer = Farmer(
+                    id=f"{country.id}_F_{farmer_counter:07d}",
+                    geography_id=geography.id,
+                    country_id=country.id,
+                    num_plots=int(num_plots),
+                    production_amount=float(production[i]),
+                    loyalty=float(loyalty)
+                )
+                farmers.append(farmer)
+                farmer_counter += 1
+        
         return farmers
 
     def _calculate_num_plots(self, percentile: float) -> int:
@@ -236,7 +227,7 @@ class CountryInitializer:
         
         return [
             Middleman(
-                id=f"{country.id}_M{i:06d}",
+                id=f"{country.id}_M_{i:05d}",
                 country_id=country.id,
                 competitiveness=float(competitiveness[i]),
                 loyalty=float(loyalty[i])
@@ -257,7 +248,7 @@ class CountryInitializer:
         
         return [
             Exporter(
-                id=f"{country.id}_E{i:06d}",
+                id=f"{country.id}_E_{i:05d}",
                 country_id=country.id,
                 competitiveness=float(competitiveness[i]),
                 eu_preference=float(eu_preference[i]),
