@@ -339,6 +339,75 @@ class TradingRegistry(BaseRegistry):
         """, (year, country_id, middleman_id))
         return [row['geography_id'] for row in data]
 
+    def get_active_trading_network(self, year: int, country_id: str) -> List[Dict]:
+        """Get all active relationships and actor attributes in a single query."""
+        query = """
+        WITH active_farmer_mm AS (
+            SELECT 
+                farmer_id, 
+                middleman_id
+            FROM farmer_middleman_relationships
+            WHERE country_id = %(country_id)s
+            AND created_at <= %(year)s
+            AND (deleted_at IS NULL OR deleted_at > %(year)s)
+        ),
+        active_mm_exp AS (
+            SELECT 
+                middleman_id, 
+                exporter_id
+            FROM middleman_exporter_relationships
+            WHERE country_id = %(country_id)s
+            AND created_at <= %(year)s
+            AND (deleted_at IS NULL OR deleted_at > %(year)s)
+        ),
+        farmer_data AS (
+            SELECT 
+                f.id AS farmer_id,
+                f.production_amount AS farmer_total_production,
+                f.loyalty AS farmer_loyalty
+            FROM farmers f
+            WHERE f.country_id = %(country_id)s
+        ),
+        middleman_data AS (
+            SELECT 
+                m.id AS middleman_id,
+                m.loyalty AS middleman_loyalty,
+                m.competitiveness AS middleman_competitiveness
+            FROM middlemen m
+            WHERE m.country_id = %(country_id)s
+        ),
+        exporter_data AS (
+            SELECT 
+                e.id AS exporter_id,
+                e.loyalty AS exporter_loyalty,
+                e.competitiveness AS exporter_competitiveness,
+                e.eu_preference
+            FROM exporters e
+            WHERE e.country_id = %(country_id)s
+        )
+        SELECT 
+            f.farmer_id,
+            m.middleman_id,
+            e.exporter_id,
+            f.farmer_total_production,
+            f.farmer_loyalty,
+            m.middleman_loyalty,
+            e.exporter_loyalty,
+            m.middleman_competitiveness,
+            e.exporter_competitiveness,
+            e.eu_preference
+        FROM active_farmer_mm fmr
+        JOIN farmer_data f ON f.farmer_id = fmr.farmer_id
+        JOIN active_mm_exp mer ON fmr.middleman_id = mer.middleman_id
+        JOIN middleman_data m ON mer.middleman_id = m.middleman_id
+        JOIN exporter_data e ON mer.exporter_id = e.exporter_id
+        ORDER BY f.farmer_id, m.middleman_id, e.exporter_id;
+        """
+        return self.db.fetch_all(
+            query,
+            {'country_id': country_id, 'year': year}
+        )
+
 
 class RelationshipRegistry(BaseRegistry):
     """Base class for relationship registries with common operations."""
