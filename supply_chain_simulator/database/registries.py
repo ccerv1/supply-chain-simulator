@@ -347,7 +347,9 @@ class RelationshipRegistry(BaseRegistry):
         """Create new relationships."""
         try:
             params = [
-                (rel[self.FROM_ID_KEY], rel[self.TO_ID_KEY], year, None)
+                (rel[self.FROM_ID_KEY], rel[self.TO_ID_KEY], 
+                 self._extract_country_id(rel[self.FROM_ID_KEY]),  # Add country_id
+                 year, None)
                 for rel in relationships
             ]
             self.db.execute_many(self.INSERT_QUERY, params)
@@ -355,6 +357,10 @@ class RelationshipRegistry(BaseRegistry):
         except Exception as e:
             self.db.rollback()
             raise
+    
+    def _extract_country_id(self, id_str: str) -> str:
+        """Extract country_id from an ID string (e.g., 'CR_M_00001' -> 'CR')."""
+        return id_str.split('_')[0]
 
     def end_relationships(self, relationships: List[tuple], year: int) -> None:
         """Mark relationships as ended in the given year."""
@@ -382,8 +388,8 @@ class MiddlemanGeographyRegistry(RelationshipRegistry):
     
     INSERT_QUERY = """
         INSERT INTO middleman_geography_relationships 
-        (middleman_id, geography_id, created_at, deleted_at)
-        VALUES (%s, %s, %s, %s)
+        (middleman_id, geography_id, country_id, created_at, deleted_at)
+        VALUES (%s, %s, %s, %s, %s)
     """
     
     UPDATE_QUERY = """
@@ -404,8 +410,8 @@ class FarmerMiddlemanRegistry(RelationshipRegistry):
     
     INSERT_QUERY = """
         INSERT INTO farmer_middleman_relationships 
-        (farmer_id, middleman_id, created_at, deleted_at)
-        VALUES (%s, %s, %s, %s)
+        (farmer_id, middleman_id, country_id, created_at, deleted_at)
+        VALUES (%s, %s, %s, %s, %s)
     """
     
     UPDATE_QUERY = """
@@ -426,8 +432,8 @@ class MiddlemanExporterRegistry(RelationshipRegistry):
     
     INSERT_QUERY = """
         INSERT INTO middleman_exporter_relationships 
-        (middleman_id, exporter_id, created_at, deleted_at)
-        VALUES (%s, %s, %s, %s)
+        (middleman_id, exporter_id, country_id, created_at, deleted_at)
+        VALUES (%s, %s, %s, %s, %s)
     """
     
     UPDATE_QUERY = """

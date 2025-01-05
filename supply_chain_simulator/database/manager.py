@@ -5,7 +5,7 @@ from contextlib import contextmanager
 import logging
 
 from config.config import DB_CONFIG
-from .schemas import SCHEMA_DEFINITIONS
+from .schemas import SCHEMA_DEFINITIONS, PARTITION_STATEMENTS
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,14 @@ class DatabaseManager:
         """Initialize the database with required tables."""
         with self.transaction():
             try:
-                # Create base tables first
+                # Ensure countries table is created first
+                self.execute(SCHEMA_DEFINITIONS['countries'])
+                
+                # Create other tables
                 for table_name, table_sql in SCHEMA_DEFINITIONS.items():
-                    logger.debug(f"Creating table: {table_name}")
-                    self.execute(table_sql)
+                    if table_name != 'countries':
+                        logger.debug(f"Creating table: {table_name}")
+                        self.execute(table_sql)
                 logger.info("Base tables created successfully")
             except Exception as e:
                 logger.error(f"Error creating tables: {str(e)}")
@@ -206,3 +210,30 @@ class DatabaseManager:
     def fetch_by_country(self, query: str, country_id: str) -> List[Dict]:
         """Common operation to fetch records by country."""
         return self.fetch_all(query, (country_id,))
+    
+    def create_country_partitions(self, country_id: str) -> None:
+        """Create partitions for a new country."""
+        partitioned_tables = [
+            'middlemen',
+            'exporters',
+            'farmers',
+            'trading_flows',
+            'farmer_middleman_relationships',
+            'middleman_exporter_relationships',
+            'middleman_geography_relationships'
+        ]
+        
+        with self.transaction():
+            try:
+                for table in partitioned_tables:
+                    self.execute(
+                        PARTITION_STATEMENTS['create_country_partition'].format(
+                            table_name=table,
+                            country_id=country_id
+                        )
+                    )
+                logger.info(f"Created partitions for country: {country_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to create partitions for {country_id}: {e}")
+                raise

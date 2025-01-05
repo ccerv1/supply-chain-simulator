@@ -310,6 +310,9 @@ class TradeSimulator:
         flows_dict = {}  # Use dict to prevent duplicates
         total_eu_volume = 0
         
+        # Pre-calculate EU ratio for this farmer's production
+        eu_ratio = country.exports_to_eu / country.total_production
+        
         # Split farmer's production among middlemen
         mm_split = np.random.dirichlet(np.ones(len(middleman_ids)))
         
@@ -331,11 +334,16 @@ class TradeSimulator:
                 
                 exporter = exporter_lookup[exp_id]
                 
-                # EU sales determination
+                # Enhanced EU sales determination
                 sold_to_eu = False
                 if total_eu_volume < country.exports_to_eu:
-                    eu_threshold = 1 - (country.traceability_rate * exporter.eu_preference)
-                    if np.random.random() > eu_threshold:
+                    # Calculate probability based on EU ratio and exporter preference
+                    probability_to_eu = min(
+                        exporter.eu_preference,
+                        eu_ratio * (1 + 0.1 * (exporter.eu_preference - 0.5))
+                    )
+                    
+                    if np.random.random() < probability_to_eu:
                         sold_to_eu = True
                         total_eu_volume += exp_volume
                 

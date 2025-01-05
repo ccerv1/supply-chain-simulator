@@ -26,27 +26,22 @@ from config.simulation import (
 logger = logging.getLogger(__name__)
 
 class CountryData:
-    """Container for country initialization data"""
     def __init__(self):
         self.country_codes = self._load_country_codes()
         self.country_assumptions = self._load_country_assumptions()
         self.geography_data = self._load_geography_data()
 
     def _load_country_codes(self) -> Dict:
-        """Load country code mappings."""
         with open(DATA_DIR / 'country_codes.json') as f:
             return json.load(f)
 
     def _load_country_assumptions(self) -> pd.DataFrame:
-        """Load country assumptions data."""
         return pd.read_csv(DATA_DIR / 'country_assums.csv')
 
     def _load_geography_data(self) -> pd.DataFrame:
-        """Load geography data."""
         return pd.read_csv(DATA_DIR / '_local/jebena_geodata.csv')
 
 class CountryInitializer:
-    """Handles initialization of a country's supply chain actors."""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db = db_manager
@@ -60,7 +55,7 @@ class CountryInitializer:
         
         # Load reference data once during initialization
         logger.info("Loading reference data...")
-        self.data = CountryData()  # Create data container
+        self.data = CountryData()
         self.country_codes = self.data.country_codes
         self.country_assumptions = self.data.country_assumptions
         self.geography_data = self.data.geography_data
@@ -73,26 +68,25 @@ class CountryInitializer:
         try:
             # 1. Create base entities
             country = self._create_country(country_id)
-            geographies = self._create_geographies(country)
             
-            # 2. Save country and geographies first
+            # 2. Save the country first
             logger.info(f"Saving country: {country.id} - {country.name}")
             self.country_registry.create(country)
             
-            logger.info(f"Saving {len(geographies)} geographies")
+            # 3. Create partitions for this country
+            self.db.create_country_partitions(country_id)
+            
+            # 4. Create and save data
+            geographies = self._create_geographies(country)
             self.geography_registry.create_many(geographies)
             
-            # 3. Create and save actors
-            logger.info("Creating actors...")
             farmers_count = self._create_farmers(country, geographies)
             logger.info(f"Created {farmers_count} farmers")
             
             middlemen = self._create_middlemen(country)
-            logger.info(f"Saving {len(middlemen)} middlemen")
             self.middleman_registry.create_many(middlemen)
             
             exporters = self._create_exporters(country)
-            logger.info(f"Saving {len(exporters)} exporters")
             self.exporter_registry.create_many(exporters)
             
             return country
@@ -102,7 +96,6 @@ class CountryInitializer:
             raise
 
     def _create_actors(self, country: Country, geographies: List[Geography]) -> Dict:
-        """Create all actors in one place."""
         return {
             'farmers': self._create_farmers(country, geographies),
             'middlemen': self._create_middlemen(country),
@@ -110,47 +103,39 @@ class CountryInitializer:
         }
 
     def _create_country(self, country_id: str) -> Country:
-        """Create and configure a country instance."""
+        """Create a country with proper integer handling."""
         country_name = self.country_codes[country_id.lower()]['full']
         assumptions = self.country_assumptions[
             self.country_assumptions['country'] == country_name
         ].iloc[0]
         
-        # Calculate totals from geography data first
         geo_df = self.geography_data[
             self.geography_data['ssu_name'].str[:2] == country_id.lower()
         ]
         
-        # Use BIGINT for large numbers
-        total_farmers = int(min(
+        total_farmers = int(
             geo_df['estimated_arabica_farmer_population'].sum() + 
-            geo_df['estimated_robusta_farmer_population'].sum(),
-            2147483647  # PostgreSQL integer max
-        ))
+            geo_df['estimated_robusta_farmer_population'].sum()
+        )
         
-        total_production = int(min(
+        total_production = int(
             geo_df['estimated_arabica_production_in_kg'].sum() + 
-            geo_df['estimated_robusta_production_in_kg'].sum(),
-            2147483647  # PostgreSQL integer max
-        ))
-        
-        # Log the actual values for debugging
-        logger.info(f"Country {country_id} totals:")
-        logger.info(f"- Raw total farmers: {total_farmers:,}")
-        logger.info(f"- Raw total production: {total_production:,} kg")
+            geo_df['estimated_robusta_production_in_kg'].sum()
+        )
+        logger.info(f"  Total farmers: {total_farmers:,}")
+        logger.info(f"  Total production: {total_production:,} kg")
         
         return Country(
             id=country_id,
             name=country_name,
             num_farmers=total_farmers,
             total_production=total_production,
-            num_middlemen=int(min(assumptions['num_middlemen'], 2147483647)),
-            num_exporters=int(min(assumptions['num_exporters'], 2147483647)),
-            exports_to_eu=int(min(assumptions['exports_to_eu'], 2147483647))
+            num_middlemen=int(assumptions['num_middlemen']),
+            num_exporters=int(assumptions['num_exporters']),
+            exports_to_eu=int(assumptions['exports_to_eu'])
         )
 
     def _create_geographies(self, country: Country) -> List[Geography]:
-        """Create geography objects for a country."""
         geo_df = self.geography_data[
             self.geography_data['ssu_name'].str[:2] == country.id.lower()
         ]
@@ -195,7 +180,6 @@ class CountryInitializer:
         return geographies
 
     def _create_farmers(self, country: Country, geographies: List[Geography]) -> List[Farmer]:
-        """Create farmer objects in a memory-efficient, chunked manner."""
         chunk_size = 50_000  # Adjust based on available memory
         farmer_counter = 0
         
@@ -246,7 +230,7 @@ class CountryInitializer:
             if farmers_chunk:
                 self.farmer_registry.create_many(farmers_chunk)
 
-        return farmer_counter  # Return total number of farmers created
+        return farmer_counter
 
     def _calculate_num_plots(self, percentile: float) -> int:
         """Calculate number of plots based on farmer's production percentile."""
@@ -317,9 +301,6 @@ class CountryInitializer:
                 
                 logger.info(f"Saving {len(geographies)} geographies")
                 self.geography_registry.create_many(geographies)
-                
-                # Farmers are already saved in chunks during creation
-                logger.info(f"Farmers already saved during chunked creation")
                 
                 logger.info(f"Saving {len(actors['middlemen'])} middlemen")
                 self.middleman_registry.create_many(actors['middlemen'])
