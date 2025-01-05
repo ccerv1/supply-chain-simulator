@@ -13,6 +13,7 @@ class DatabaseManager:
     def __init__(self, connection_params):
         self.connection_params = connection_params
         self._conn = None
+        self.BATCH_SIZE = 10000  # Configurable batch size
         
     def initialize_database(self):
         """Initialize the database with required tables."""
@@ -68,11 +69,17 @@ class DatabaseManager:
             conn.commit()
     
     def execute_many(self, query: str, params: List[tuple]) -> None:
-        """Execute many queries in a single transaction."""
-        conn = self.get_connection()
-        with conn.cursor() as cur:
-            cur.executemany(query, params)
-            conn.commit()
+        """Execute many with batching for better performance."""
+        with self.get_connection().cursor() as cur:
+            # Use server-side cursor for large datasets
+            cur.itersize = 2000
+            
+            # Process in batches
+            for i in range(0, len(params), self.BATCH_SIZE):
+                batch = params[i:i + self.BATCH_SIZE]
+                cur.executemany(query, batch)
+                
+            self.commit()
     
     def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
         """Fetch a single row from the database."""
@@ -81,13 +88,22 @@ class DatabaseManager:
             cur.execute(query, params)
             return cur.fetchone()
     
-    def fetch_all(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
-        """Fetch all rows from the database."""
+    def fetch_all(self, query: str, params: tuple = (), chunk_size: int = 2000) -> List[Dict[str, Any]]:
+        """Fetch all rows using server-side cursor for memory efficiency."""
         conn = self.get_connection()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        results = []
+        
+        with conn.cursor(name='fetch_cursor', cursor_factory=RealDictCursor) as cur:
+            cur.itersize = chunk_size
             cur.execute(query, params)
-            result = cur.fetchall()
-            return [dict(row) for row in result]
+            
+            while True:
+                rows = cur.fetchmany(chunk_size)
+                if not rows:
+                    break
+                results.extend([dict(row) for row in rows])
+        
+        return results
     
     def wipe_database(self) -> None:
         """Drop all tables and recreate them."""

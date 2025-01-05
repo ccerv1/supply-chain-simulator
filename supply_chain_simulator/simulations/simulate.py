@@ -25,9 +25,9 @@ class CountrySimulation:
         self.country_id = None
         
         # Add new relationship registries
-        self.mm_geo_registry = MiddlemanGeographyRegistry(db_manager)
-        self.farmer_mm_registry = FarmerMiddlemanRegistry(db_manager)
-        self.mm_exp_registry = MiddlemanExporterRegistry(db_manager)
+        self.mm_geo_registry = MiddlemanGeographyRegistry(self.db)
+        self.farmer_mm_registry = FarmerMiddlemanRegistry(self.db)
+        self.mm_exp_registry = MiddlemanExporterRegistry(self.db)
         
         random.seed(DEFAULT_RANDOM_SEED)
 
@@ -155,7 +155,7 @@ class CountrySimulation:
                 return
 
             # Run simulation steps
-            logger.info(f"Simulating trading for year {year}")
+            logger.info(f"Simulating trading for {country_id} in year {year}")
             
             # 1. Set up geography relationships
             self.set_middleman_geographies(year)

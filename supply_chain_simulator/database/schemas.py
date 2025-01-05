@@ -123,3 +123,30 @@ SCHEMA_DEFINITIONS = {
         )
     """
 }
+
+INDEXES = {
+    'trading_flows_idx': """
+        CREATE INDEX IF NOT EXISTS trading_flows_year_country 
+        ON trading_flows (year, country_id)
+    """,
+    'farmer_mm_idx': """
+        CREATE INDEX IF NOT EXISTS farmer_mm_active 
+        ON farmer_middleman_relationships (created_at, deleted_at)
+    """,
+    'mm_exp_idx': """
+        CREATE INDEX IF NOT EXISTS mm_exp_active 
+        ON middleman_exporter_relationships (created_at, deleted_at)
+    """,
+    'mm_geo_idx': """
+        CREATE INDEX IF NOT EXISTS mm_geo_active 
+        ON middleman_geography_relationships (created_at, deleted_at)
+    """
+}
+
+def initialize_database(db_manager):
+    """Initialize database with schemas and indexes."""
+    for table_name, schema in SCHEMA_DEFINITIONS.items():
+        db_manager.execute(schema)
+    
+    for index_name, index in INDEXES.items():
+        db_manager.execute(index)

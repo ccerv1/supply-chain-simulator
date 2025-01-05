@@ -6,12 +6,14 @@ Main execution script
 import logging
 import argparse
 from typing import Dict
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
 
 from database.manager import DatabaseManager
 from simulations.simulate import CountrySimulation
 from simulations.initialize import CountryInitializer
 from config.config import DB_CONFIG
-from config.simulation import COUNTRIES
+from config.simulation import COUNTRIES, NUM_YEARS
 from simulations.trade import TradeSimulator
 
 logger = logging.getLogger(__name__)
@@ -102,21 +104,40 @@ def parse_args():
                        help='Wipe trading tables before simulation')
     return parser.parse_args()
 
+def run_country_simulation(db_config: Dict, country_id: str, year: int):
+    """Run simulation for a single country."""
+    db_manager = DatabaseManager(db_config)
+    country_sim = CountrySimulation(db_manager)
+    country_sim.initialize_country_actors(country_id)
+    country_sim.simulate_year(country_id, year)
+    db_manager.close()
+
 def run_simulation(db_manager: DatabaseManager, config: Dict):
-    """Run complete simulation with clear steps."""
-    # 1. Initialize
+    """Run simulation with parallel processing."""
+    # Initialize countries first
     initializer = CountryInitializer(db_manager)
-    simulator = TradeSimulator(db_manager)
     
-    # 2. Setup countries
+    existing_countries = {
+        country.id for country in initializer.country_registry.get_all()
+    }
+    
     for country_id in config['countries']:
-        if not country_exists(country_id):
+        if country_id not in existing_countries:
+            logger.info(f"Initializing new country: {country_id}")
             initializer.initialize_country(country_id)
     
-    # 3. Run simulation
+    # Run simulation in parallel
+    max_workers = min(multiprocessing.cpu_count(), len(config['countries']))
+    
     for year in range(config['num_years']):
-        for country_id in config['countries']:
-            simulator.run_year(country_id, year)
+        logger.info(f"Simulating year {year}")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(run_country_simulation, DB_CONFIG, country_id, year)
+                for country_id in config['countries']
+            ]
+            for future in futures:
+                future.result()  # Wait for completion and handle any errors
 
 def main():
     """Main entry point for the supply chain simulator."""
@@ -127,12 +148,16 @@ def main():
     
     args = parse_args()
     
+    # Create simulation config from constants
+    config = {
+        'countries': COUNTRIES,
+        'num_years': NUM_YEARS
+    }
+    
     try:
         db_manager = DatabaseManager(DB_CONFIG)
         db_manager.wipe_database()
-        ensure_database_initialized(db_manager)
-        initialize_missing_countries(db_manager)
-        run_test_simulation(db_manager, wipe_first=args.wipe)        
+        run_simulation(db_manager, config)
         db_manager.close()
         
     except Exception as e:

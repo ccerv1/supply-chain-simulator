@@ -215,42 +215,36 @@ class TradingRegistry(BaseRegistry):
     """Registry for managing trading relationships."""
     
     def create_many(self, relationships: List[TradeFlow]) -> None:
-        """Create trade flows, combining duplicates."""
+        """Create trade flows in chunks with duplicate handling."""
         try:
-            # Create a dictionary to combine duplicate flows
-            combined_flows = {}
+            chunk_size = 100_000
             
-            for flow in relationships:
-                key = (flow.year, flow.country_id, flow.farmer_id, 
-                      flow.middleman_id, flow.exporter_id)
-                if key in combined_flows:
-                    # Add volumes for same flow
-                    combined_flows[key].amount_kg += flow.amount_kg
-                else:
-                    combined_flows[key] = flow
-            
-            # Convert back to list and prepare for insert
-            unique_flows = list(combined_flows.values())
-            
-            # Insert unique flows
-            self.db.execute_many("""
-                INSERT INTO trading_flows (
-                    year, country_id, farmer_id, middleman_id,
-                    exporter_id, sold_to_eu, amount_kg
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (country_id, year, farmer_id, middleman_id, exporter_id)
-                DO UPDATE SET amount_kg = trading_flows.amount_kg + EXCLUDED.amount_kg
-            """, [
-                (
-                    flow.year,
-                    flow.country_id,
-                    flow.farmer_id,
-                    flow.middleman_id,
-                    flow.exporter_id,
-                    flow.sold_to_eu,
-                    flow.amount_kg
-                ) for flow in unique_flows
-            ])
+            for i in range(0, len(relationships), chunk_size):
+                chunk = relationships[i:i + chunk_size]
+                
+                # Insert chunk with conflict resolution
+                self.db.execute_many("""
+                    INSERT INTO trading_flows (
+                        year, country_id, farmer_id, middleman_id,
+                        exporter_id, sold_to_eu, amount_kg
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (country_id, year, farmer_id, middleman_id, exporter_id)
+                    DO UPDATE SET 
+                        amount_kg = trading_flows.amount_kg + EXCLUDED.amount_kg,
+                        sold_to_eu = EXCLUDED.sold_to_eu
+                """, [
+                    (
+                        flow.year,
+                        flow.country_id,
+                        flow.farmer_id,
+                        flow.middleman_id,
+                        flow.exporter_id,
+                        flow.sold_to_eu,
+                        flow.amount_kg
+                    ) for flow in chunk
+                ])
+                
+                logger.info(f"Inserted chunk of {len(chunk)} trade flows")
             
         except Exception as e:
             logger.error(f"Error creating trade flows: {str(e)}")
@@ -373,7 +367,7 @@ class RelationshipRegistry(BaseRegistry):
             raise
 
     def get_active_relationships(self, year: int, country_id: str) -> List[Dict]:
-        """Get active relationships for a specific year."""
+        """Get active relationships efficiently using indexed columns."""
         return self.db.fetch_all(f"""
             SELECT {self.FROM_ID_KEY}, {self.TO_ID_KEY}
             FROM {self.TABLE_NAME}

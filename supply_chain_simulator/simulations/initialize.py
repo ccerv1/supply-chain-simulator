@@ -71,18 +71,31 @@ class CountryInitializer:
     def initialize_country(self, country_id: str) -> Country:
         """Initialize a country with clearer steps."""
         try:
-            with self.db.transaction():
-                # 1. Create base entities
-                country = self._create_country(country_id)
-                geographies = self._create_geographies(country)
-                
-                # 2. Create actors
-                actors = self._create_actors(country, geographies)
-                
-                # 3. Save everything in one transaction
-                self._save_all(country, geographies, actors)
-                
-                return country
+            # 1. Create base entities
+            country = self._create_country(country_id)
+            geographies = self._create_geographies(country)
+            
+            # 2. Save country and geographies first
+            logger.info(f"Saving country: {country.id} - {country.name}")
+            self.country_registry.create(country)
+            
+            logger.info(f"Saving {len(geographies)} geographies")
+            self.geography_registry.create_many(geographies)
+            
+            # 3. Create and save actors
+            logger.info("Creating actors...")
+            farmers_count = self._create_farmers(country, geographies)
+            logger.info(f"Created {farmers_count} farmers")
+            
+            middlemen = self._create_middlemen(country)
+            logger.info(f"Saving {len(middlemen)} middlemen")
+            self.middleman_registry.create_many(middlemen)
+            
+            exporters = self._create_exporters(country)
+            logger.info(f"Saving {len(exporters)} exporters")
+            self.exporter_registry.create_many(exporters)
+            
+            return country
                 
         except Exception as e:
             logger.error(f"Failed to initialize {country_id}: {e}")
@@ -182,8 +195,8 @@ class CountryInitializer:
         return geographies
 
     def _create_farmers(self, country: Country, geographies: List[Geography]) -> List[Farmer]:
-        """Create farmer objects for all geographies."""
-        farmers = []
+        """Create farmer objects in a memory-efficient, chunked manner."""
+        chunk_size = 50_000  # Adjust based on available memory
         farmer_counter = 0
         
         for geography in geographies:
@@ -197,19 +210,18 @@ class CountryInitializer:
                 size=geography.num_farmers
             )
             
-            # Normalize to match total production
+            # Normalize and handle rounding
             production = production * (geography.total_production_kg / production.sum())
             production = np.round(production).astype(int)
-            
-            # Adjust for rounding errors
             diff = geography.total_production_kg - production.sum()
             if diff != 0:
                 production[production.argmax()] += diff
 
-            # Calculate percentiles for plot assignment
+            # Calculate percentiles
             percentiles = (production / production.sum()).argsort() / len(production)
             
-            # Create farmers with sequential IDs at country level
+            # Process farmers in chunks
+            farmers_chunk = []
             for i in range(geography.num_farmers):
                 num_plots = self._calculate_num_plots(percentiles[i])
                 loyalty = np.clip(np.random.normal(0.5, 0.25), 0, 1)
@@ -222,10 +234,19 @@ class CountryInitializer:
                     production_amount=float(production[i]),
                     loyalty=float(loyalty)
                 )
-                farmers.append(farmer)
+                farmers_chunk.append(farmer)
                 farmer_counter += 1
-        
-        return farmers
+                
+                # Save chunk when it reaches the size limit
+                if len(farmers_chunk) >= chunk_size:
+                    self.farmer_registry.create_many(farmers_chunk)
+                    farmers_chunk = []
+            
+            # Save any remaining farmers in the final chunk
+            if farmers_chunk:
+                self.farmer_registry.create_many(farmers_chunk)
+
+        return farmer_counter  # Return total number of farmers created
 
     def _calculate_num_plots(self, percentile: float) -> int:
         """Calculate number of plots based on farmer's production percentile."""
@@ -290,15 +311,15 @@ class CountryInitializer:
     def _save_all(self, country: Country, geographies: List[Geography], actors: Dict) -> None:
         """Save all entities in a single transaction."""
         try:
-            with self.db.transaction():  # Add transaction context manager to DatabaseManager
+            with self.db.transaction():
                 logger.info(f"Saving country: {country.id} - {country.name}")
                 self.country_registry.create(country)
                 
                 logger.info(f"Saving {len(geographies)} geographies")
                 self.geography_registry.create_many(geographies)
                 
-                logger.info(f"Saving {len(actors['farmers'])} farmers")
-                self.farmer_registry.create_many(actors['farmers'])
+                # Farmers are already saved in chunks during creation
+                logger.info(f"Farmers already saved during chunked creation")
                 
                 logger.info(f"Saving {len(actors['middlemen'])} middlemen")
                 self.middleman_registry.create_many(actors['middlemen'])
