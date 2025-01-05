@@ -18,7 +18,7 @@ COUNTRIES = [
     # 'BR',
     # 'CO',
     # 'PE',
-    # 'VN',
+    'VN',
     # 'ID',    
     # 'ET',
     # 'RW',
