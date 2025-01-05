@@ -126,6 +126,54 @@ class DatabaseManager:
                 logger.error(f"Error wiping database: {str(e)}")
                 raise
     
+    def wipe_country(self, country_id: str) -> None:
+        """Remove all data for a specific country."""
+        with self.transaction():
+            try:
+                # Delete in reverse order of dependencies
+                deletions = [
+                    ("trading_flows", "country_id = %s"),
+                    ("farmer_middleman_relationships", "farmer_id LIKE %s"),
+                    ("middleman_exporter_relationships", "middleman_id LIKE %s"),
+                    ("middleman_geography_relationships", "middleman_id LIKE %s"),
+                    ("exporters", "country_id = %s"),
+                    ("middlemen", "country_id = %s"),
+                    ("farmers", "country_id = %s"),
+                    ("geographies", "country_id = %s"),
+                    ("countries", "id = %s")
+                ]
+
+                for table, condition in deletions:
+                    param = country_id if "LIKE" not in condition else f"{country_id}_%"
+                    self.execute(f"DELETE FROM {table} WHERE {condition}", (param,))
+                    
+                logger.info(f"Successfully wiped country: {country_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to wipe country {country_id}: {e}")
+                raise
+    
+    def wipe_trading_data(self) -> None:
+        """Wipe only trading-related tables."""
+        with self.transaction():
+            try:
+                tables = [
+                    'trading_flows',
+                    'farmer_middleman_relationships',
+                    'middleman_exporter_relationships',
+                    'middleman_geography_relationships'
+                ]
+                
+                for table in tables:
+                    self.execute_ddl(f"TRUNCATE TABLE {table} CASCADE")
+                    logger.info(f"Wiped {table}")
+                
+                logger.info("Successfully wiped all trading data")
+                
+            except Exception as e:
+                logger.error(f"Failed to wipe trading data: {e}")
+                raise
+    
     @contextmanager
     def transaction(self):
         """Context manager for database transactions."""

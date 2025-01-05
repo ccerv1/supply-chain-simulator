@@ -144,9 +144,8 @@ class CountrySimulation:
     def simulate_year(self, country_id: str, year: int) -> None:
         """Run single year simulation."""
         try:
-            # Set country ID if not already set
-            if not self.country_id:
-                self.country_id = country_id
+            # Set country ID
+            self.country_id = country_id
             
             # Check existing simulation
             existing = self.simulator.trading_registry.get_by_year_and_country(year, country_id)

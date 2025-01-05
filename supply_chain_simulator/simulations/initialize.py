@@ -330,3 +330,7 @@ class CountryInitializer:
         except Exception as e:
             logger.error(f"Error saving data: {str(e)}")
             raise
+
+    def wipe_country(self, country_id: str) -> None:
+        """Remove all data for a specific country."""
+        self.db.wipe_country(country_id)
