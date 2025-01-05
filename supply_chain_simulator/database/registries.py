@@ -364,7 +364,8 @@ class TradingRegistry(BaseRegistry):
             SELECT 
                 f.id AS farmer_id,
                 f.production_amount AS farmer_total_production,
-                f.loyalty AS farmer_loyalty
+                f.loyalty AS farmer_loyalty,
+                f.geography_id
             FROM farmers f
             WHERE f.country_id = %(country_id)s
         ),
@@ -372,8 +373,10 @@ class TradingRegistry(BaseRegistry):
             SELECT 
                 m.id AS middleman_id,
                 m.loyalty AS middleman_loyalty,
-                m.competitiveness AS middleman_competitiveness
+                m.competitiveness AS middleman_competitiveness,
+                mg.geography_id
             FROM middlemen m
+            JOIN middleman_geography_relationships mg ON m.id = mg.middleman_id
             WHERE m.country_id = %(country_id)s
         ),
         exporter_data AS (
@@ -384,6 +387,16 @@ class TradingRegistry(BaseRegistry):
                 e.eu_preference
             FROM exporters e
             WHERE e.country_id = %(country_id)s
+        ),
+        available_middlemen AS (
+            SELECT 
+                fg.geography_id,
+                ARRAY_AGG(distinct mg.middleman_id) AS available_middleman
+            FROM farmers fg
+            JOIN middleman_geography_relationships mg ON fg.geography_id = mg.geography_id
+            JOIN middlemen m ON mg.middleman_id = m.id
+            WHERE fg.country_id = %(country_id)s
+            GROUP BY fg.geography_id
         )
         SELECT 
             f.farmer_id,
@@ -395,12 +408,14 @@ class TradingRegistry(BaseRegistry):
             e.exporter_loyalty,
             m.middleman_competitiveness,
             e.exporter_competitiveness,
-            e.eu_preference
+            e.eu_preference,
+            am.available_middleman
         FROM active_farmer_mm fmr
         JOIN farmer_data f ON f.farmer_id = fmr.farmer_id
         JOIN active_mm_exp mer ON fmr.middleman_id = mer.middleman_id
         JOIN middleman_data m ON mer.middleman_id = m.middleman_id
         JOIN exporter_data e ON mer.exporter_id = e.exporter_id
+        LEFT JOIN available_middlemen am ON f.geography_id = am.geography_id
         ORDER BY f.farmer_id, m.middleman_id, e.exporter_id;
         """
         return self.db.fetch_all(
@@ -417,7 +432,7 @@ class RelationshipRegistry(BaseRegistry):
         try:
             params = [
                 (rel[self.FROM_ID_KEY], rel[self.TO_ID_KEY], 
-                 self._extract_country_id(rel[self.FROM_ID_KEY]),  # Add country_id
+                 self._extract_country_id(rel[self.FROM_ID_KEY]),
                  year, None)
                 for rel in relationships
             ]
