@@ -50,53 +50,49 @@ class TradeSimulator:
         
         np.random.seed(DEFAULT_RANDOM_SEED)
 
-    def simulate_trade_flows(self, country: Country, year: int = 0) -> List[TradeFlow]:
-        """Add partition creation before simulation."""
-        # Create year partition if needed
-        self.db.create_partitions(country.id, year)
-        
-        # Get relationships from partitioned tables
-        mm_geo_rels = self.mm_geo_registry.get_active_relationships(year, country.id)
-        farmer_mm_rels = self.farmer_mm_registry.get_active_relationships(year, country.id)
-        mm_exp_rels = self.mm_exp_registry.get_active_relationships(year, country.id)
-        
-        # Get active relationships for this year
-        mm_geo_rels = self.mm_geo_registry.get_active_relationships(year)
-        farmer_mm_rels = self.farmer_mm_registry.get_active_relationships(year)
-        mm_exp_rels = self.mm_exp_registry.get_active_relationships(year)
-        
-        # Create initial relationships if year 0
-        if year == 0:
-            # Create middleman-exporter relationships
-            mm_exp_rels = self._assign_middlemen_to_exporters(middlemen, exporters, country)
-            self.mm_exp_registry.create_many(mm_exp_rels, year)
+    def simulate_trade_flows(self, country: Country, farmers: List[Farmer],
+                            middlemen: List[Middleman], exporters: List[Exporter],
+                            year: int = 0) -> List[TradeFlow]:
+        """Create trading relationships between actors."""
+        try:
+            # Get active relationships for this year
+            mm_geo_rels = self.mm_geo_registry.get_active_relationships(year, country.id)
+            farmer_mm_rels = self.farmer_mm_registry.get_active_relationships(year, country.id)
+            mm_exp_rels = self.mm_exp_registry.get_active_relationships(year, country.id)
             
-            # Create farmer-middleman relationships based on geography assignments
-            farmer_mm_rels = self._assign_farmers_to_middlemen(
-                farmers, mm_geo_rels, country
-            )
-            self.farmer_mm_registry.create_many(farmer_mm_rels, year)
-        else:
-            # Update relationships based on loyalty/switching rates
-            self._update_farmer_middleman_relationships(
-                farmers, middlemen, farmer_mm_rels, mm_geo_rels, country, year
-            )
-            self._update_middleman_exporter_relationships(
-                middlemen, exporters, mm_exp_rels, country, year
-            )
-            
-            # Get updated relationships
-            farmer_mm_rels = self.farmer_mm_registry.get_active_relationships(year)
-            mm_exp_rels = self.mm_exp_registry.get_active_relationships(year)
+            # Process in a single transaction
+            with self.db.transaction():
+                if year == 0:
+                    # Initial relationships
+                    mm_exp_rels = self._assign_middlemen_to_exporters(middlemen, exporters, country)
+                    self.mm_exp_registry.create_many(mm_exp_rels, year)
+                    
+                    farmer_mm_rels = self._assign_farmers_to_middlemen(farmers, mm_geo_rels, country)
+                    self.farmer_mm_registry.create_many(farmer_mm_rels, year)
+                else:
+                    # Update existing relationships
+                    self._update_farmer_middleman_relationships(
+                        farmers, middlemen, farmer_mm_rels, mm_geo_rels, country, year
+                    )
+                    self._update_middleman_exporter_relationships(
+                        middlemen, exporters, mm_exp_rels, country, year
+                    )
+                    
+                    # Get updated relationships
+                    farmer_mm_rels = self.farmer_mm_registry.get_active_relationships(year, country.id)
+                    mm_exp_rels = self.mm_exp_registry.get_active_relationships(year, country.id)
 
-        # Generate trade flows based on relationships
-        return self._generate_relationships(
-            year=year,
-            country=country,
-            farmers=farmers,
-            farmer_mm_rels=farmer_mm_rels,
-            mm_exp_rels=mm_exp_rels
-        )
+            # Generate trade flows based on relationships
+            return self._generate_relationships(
+                year=year,
+                country=country,
+                farmers=farmers,
+                farmer_mm_rels=farmer_mm_rels,
+                mm_exp_rels=mm_exp_rels
+            )
+        except Exception as e:
+            logger.error(f"Error in simulate_trade_flows: {str(e)}")
+            raise
 
     def _update_farmer_middleman_relationships(
         self, farmers: List[Farmer], middlemen: List[Middleman], 
@@ -279,8 +275,12 @@ class TradeSimulator:
                 continue
             
             flows = self._generate_farmer_flows(
-                farmer, farmer_mm_map[farmer.id], 
-                mm_exp_map, exporter_lookup, country
+                farmer=farmer,
+                middleman_ids=farmer_mm_map[farmer.id], 
+                mm_exp_map=mm_exp_map,
+                exporter_lookup=exporter_lookup,
+                country=country,
+                year=year
             )
             relationships.extend(flows)
         
@@ -305,9 +305,9 @@ class TradeSimulator:
             non_eu_relationships[largest_non_eu_idx].amount_kg += volume_difference
 
     def _generate_farmer_flows(self, farmer: Farmer, middleman_ids: List[str], 
-                             mm_exp_map: Dict, exporter_lookup: Dict, country: Country) -> List[TradeFlow]:
+                             mm_exp_map: Dict, exporter_lookup: Dict, country: Country, year: int) -> List[TradeFlow]:
         """Generate trade flows for a single farmer."""
-        flows = []
+        flows_dict = {}  # Use dict to prevent duplicates
         total_eu_volume = 0
         
         # Split farmer's production among middlemen
@@ -339,14 +339,21 @@ class TradeSimulator:
                         sold_to_eu = True
                         total_eu_volume += exp_volume
                 
-                flows.append(TradeFlow(
-                    year=0,  # Will be set by simulate_trade_flows
-                    country_id=country.id,
-                    farmer_id=farmer.id,
-                    middleman_id=mm_id,
-                    exporter_id=exp_id,
-                    amount_kg=int(exp_volume),
-                    sold_to_eu=sold_to_eu
-                ))
+                # Create unique key for this flow
+                flow_key = (year, country.id, farmer.id, mm_id, exp_id, sold_to_eu)
+                
+                # If flow exists, add to volume, otherwise create new flow
+                if flow_key in flows_dict:
+                    flows_dict[flow_key].amount_kg += int(exp_volume)
+                else:
+                    flows_dict[flow_key] = TradeFlow(
+                        year=year,
+                        country_id=country.id,
+                        farmer_id=farmer.id,
+                        middleman_id=mm_id,
+                        exporter_id=exp_id,
+                        amount_kg=int(exp_volume),
+                        sold_to_eu=sold_to_eu
+                    )
         
-        return flows
+        return list(flows_dict.values())

@@ -2,11 +2,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
-from pathlib import Path
 import logging
 
 from config.config import DB_CONFIG
-from .schemas import SCHEMA_DEFINITIONS, PARTITION_STATEMENTS, INDEX_STATEMENTS
+from .schemas import SCHEMA_DEFINITIONS
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +16,16 @@ class DatabaseManager:
         
     def initialize_database(self):
         """Initialize the database with required tables."""
-        conn = self.get_connection()
-        with conn.cursor() as cur:
-            for table_sql in SCHEMA_DEFINITIONS.values():
-                cur.execute(table_sql)
-            conn.commit()
+        with self.transaction():
+            try:
+                # Create base tables first
+                for table_name, table_sql in SCHEMA_DEFINITIONS.items():
+                    logger.debug(f"Creating table: {table_name}")
+                    self.execute(table_sql)
+                logger.info("Base tables created successfully")
+            except Exception as e:
+                logger.error(f"Error creating tables: {str(e)}")
+                raise
     
     def get_connection(self):
         """Get a database connection."""
@@ -49,7 +53,18 @@ class DatabaseManager:
         """Execute a query without returning results."""
         conn = self.get_connection()
         with conn.cursor() as cur:
-            cur.execute(query, params)
+            if params:
+                cur.execute(query, params)
+            else:
+                # For DDL statements and raw SQL
+                cur.execute(query)
+            conn.commit()
+    
+    def execute_ddl(self, query: str) -> None:
+        """Execute DDL statements (CREATE, DROP, etc.)."""
+        conn = self.get_connection()
+        with conn.cursor() as cur:
+            cur.execute(query)
             conn.commit()
     
     def execute_many(self, query: str, params: List[tuple]) -> None:
@@ -75,24 +90,25 @@ class DatabaseManager:
             return [dict(row) for row in result]
     
     def wipe_database(self) -> None:
-        """Drop all tables in the database."""
-        conn = self.get_connection()
-        with conn.cursor() as cur:
-            # Get all table names
-            cur.execute("""
-                SELECT tablename FROM pg_tables 
-                WHERE schemaname = 'public'
-            """)
-            tables = cur.fetchall()
-            
-            # Drop each table
-            for table in tables:
-                cur.execute(f'DROP TABLE IF EXISTS {table[0]} CASCADE')
-            
-            conn.commit()
-            
-        # Reinitialize the database with empty tables
-        self.initialize_database()
+        """Drop all tables and recreate them."""
+        with self.transaction():
+            try:
+                # Drop all tables in reverse order to handle dependencies
+                tables = [
+                    'trading_flows', 'middleman_exporter_relationships',
+                    'farmer_middleman_relationships', 'middleman_geography_relationships',
+                    'exporters', 'middlemen', 'farmers', 'geographies', 'countries'
+                ]
+                
+                for table in tables:
+                    self.execute_ddl(f"DROP TABLE IF EXISTS {table} CASCADE")
+                
+                # Recreate tables
+                self.initialize_database()
+                
+            except Exception as e:
+                logger.error(f"Error wiping database: {str(e)}")
+                raise
     
     @contextmanager
     def transaction(self):
@@ -116,63 +132,13 @@ class DatabaseManager:
             raise
     
     def execute_batch(self, query: str, params: List[tuple]):
-        """Execute multiple operations in a single transaction."""
+        """Execute multiple operations efficiently."""
         with self.batch_operation():
             with self.get_connection().cursor() as cur:
+                # Use server-side cursor for large datasets
+                cur.itersize = 2000
                 cur.executemany(query, params)
                 
     def fetch_by_country(self, query: str, country_id: str) -> List[Dict]:
         """Common operation to fetch records by country."""
         return self.fetch_all(query, (country_id,))
-    
-    def create_partitions(self, country_id: str, year: int = None):
-        """Create partitions for a country and optionally a specific year."""
-        with self.transaction():
-            # Create country-based partitions
-            for table in ['geographies', 'farmers', 'middlemen', 'exporters']:
-                self.execute(
-                    PARTITION_STATEMENTS['create_country_partition'].format(
-                        table_name=table,
-                        country_id=country_id
-                    )
-                )
-            
-            # Create trading flow partitions if year specified
-            if year is not None:
-                # Create country partition for trading flows if it doesn't exist
-                self.execute(
-                    PARTITION_STATEMENTS['create_trading_partition'].format(
-                        country_id=country_id,
-                        year=year
-                    )
-                )
-                
-                # Create year partition
-                self.execute(
-                    PARTITION_STATEMENTS['create_year_partition'].format(
-                        country_id=country_id,
-                        year=year,
-                        next_year=year + 1
-                    )
-                )
-    
-    def create_indexes(self, country_id: str, year: int = None):
-        """Create indexes for partitioned tables."""
-        with self.transaction():
-            # Create indexes for country partitions
-            for table in ['farmers', 'middlemen', 'exporters']:
-                self.execute(
-                    INDEX_STATEMENTS['create_geography_indexes'].format(
-                        table=table,
-                        country_id=country_id
-                    )
-                )
-            
-            # Create indexes for trading flows if year specified
-            if year is not None:
-                self.execute(
-                    INDEX_STATEMENTS['create_trading_indexes'].format(
-                        country_id=country_id,
-                        year=year
-                    )
-                )
