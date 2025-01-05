@@ -1,77 +1,182 @@
 # Supply Chain Simulator
 
-The Supply Chain Simulator is a Python-based project designed to model and simulate the supply chain dynamics of agricultural products from farmers to exporters. The project consists of three main components: `prep_country_assums.py`, `seed_country_chains.py`, and an interactive Streamlit dashboard.
+A Python-based simulation of the global coffee supply chain, modeling relationships and trade flows between farmers, middlemen, and exporters.
 
-## Project Structure
+## Installation & Setup
 
-- **prep_country_assums.py**: This script processes country-specific assumptions and data, including trade and geographical data, to prepare a dataset (`country_assums.csv`) that includes the number of farmers, total production, and export volumes categorized by EU and other destinations.
+### 1. PostgreSQL Setup
 
-- **seed_country_chains.py**: This script simulates the supply chain for each country using the prepared data. It models the production distribution among farmers, the capacity of middlemen, and the capacity of exporters. The results are saved as flow data, detailing the connections and quantities between farmers, middlemen, and exporters.
+1. Install PostgreSQL:
+```bash
+# On macOS with Homebrew:
+brew install postgresql@15
+brew services start postgresql@15
+```
 
-- **dashboard.py**: An interactive Streamlit dashboard that visualizes the simulation results, including distribution analyses for farmers, middlemen, and exporters, as well as traceability metrics and random sampling analysis.
+2. Create a database and user:
+```bash
+# Connect to PostgreSQL
+psql postgres
 
-## How It Works
+# In the PostgreSQL prompt:
+CREATE DATABASE supply_chain_simulator;
+CREATE USER postgres WITH PASSWORD 'postgres';  # If not already exists
+GRANT ALL PRIVILEGES ON DATABASE supply_chain_simulator TO postgres;
+```
 
-### Data Preparation (`prep_country_assums.py`)
+3. Configure environment variables:
+```bash
+# Create .env file in project root
+cat > .env << EOL
+DB_NAME=supply_chain_simulator
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=localhost
+DB_PORT=5432
+EOL
+```
 
-1. **Load Data**: The script loads trade data from `comtrade_2019.csv` and geographical data from `jebena_geo_map_dataset.csv`.
+The database uses the following schema structure:
+- Countries: Base table with country-level parameters
+- Geographies: Regions within countries with production data
+- Actors (partitioned by country):
+  - Farmers: Production amounts and loyalty scores
+  - Middlemen: Competitiveness and loyalty metrics
+  - Exporters: EU preferences and competitiveness scores
+- Relationships (temporal tracking):
+  - Farmer-Middleman relationships
+  - Middleman-Exporter relationships
+  - Middleman-Geography assignments
+- Trade Flows: Actual transactions with volumes and EU designation
 
-2. **Process Trade Data**: It processes the trade data to categorize exports as either to the EU or other destinations.
+### 2. Project Setup
 
-3. **Process Geographical Data**: It processes geographical data to estimate the number of farmers and total production for each country.
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/supply-chain-simulator.git
+cd supply-chain-simulator
+```
 
-4. **Export Data**: The processed data is combined and exported to `country_assums.csv`, which is used by the simulation script.
+2. Install Poetry (if not already installed):
+```bash
+curl -sSL https://install.python-poetry.org | python3 -
+```
 
-### Simulation (`seed_country_chains.py`)
+3. Install dependencies and create virtual environment:
+```bash
+poetry install
+```
 
-1. **Load Simulation Data**: The script loads the prepared data from `country_assums.csv`.
+4. Activate the virtual environment:
+```bash
+poetry shell
+```
 
-2. **Run Simulations**: It runs simulations for specified countries, modeling the supply chain from farmers to exporters. The simulation includes:
-   - Generating farmers and their production capacities.
-   - Assigning farmers to middlemen and middlemen to exporters.
-   - Calculating the distribution of production and export volumes.
+## Running the Simulation
 
-3. **Output Results**: The results of the simulations, including flow data, are saved to `global_flows.parquet`.
+1. Initialize the database:
+```bash
+python supply_chain_simulator/main.py --wipe-all
+```
 
-### Dashboard Visualization (`dashboard.py`)
+2. Run simulation for specific countries:
+```bash
+python supply_chain_simulator/main.py --countries CR UG  # For Costa Rica and Uganda
+```
 
-1. **Interactive Analysis**: The dashboard provides:
-   - Country-specific distribution analysis for farmers, middlemen, and exporters
-   - Visual KDE plots with key statistics
-   - Traceability analysis showing connections between supply chain actors
-   - Random sampling analysis to assess farmer coverage
+3. Run for all countries with specific years:
+```bash
+python supply_chain_simulator/main.py --years 5  # Simulate 5 years
+```
 
-2. **Features**:
-   - Interactive country selection
-   - Distribution visualizations with statistical summaries
-   - Network analysis of farmer-middleman-exporter relationships
-   - Random sampling metrics for supply chain coverage
+## Required Data Files
 
-## Usage
+The simulation requires two primary data sources:
 
-1. **Prepare Data**: Run `prep_country_assums.py` to generate the `country_assums.csv` file.
-   ```bash
-   python prep_country_assums.py
-   ```
+1. **Geography Data** (`data/jebena_geo_map_dataset.csv`):
+   - Geographic regions within each country
+   - Estimated farmer populations
+   - Production volumes for arabica and robusta
+   - Primary crop types
 
-2. **Run Simulations**: Execute `seed_country_chains.py` to perform the simulations and generate results.
-   ```bash
-   python seed_country_chains.py
-   ```
+2. **Country Assumptions** (`data/country_assums.csv`):
+   - Country-level parameters
+   - Number of middlemen and exporters
+   - EU export volumes
+   - Relationship parameters (loyalty rates, switching probabilities)
 
-3. **Launch Dashboard**: Start the Streamlit dashboard to explore the simulation results:
-   ```bash
-   streamlit run supply_chain_simulator/dashboard.py
-   ```
+## Simulation Process
 
-## Requirements
+### 1. Database Initialization
+- Creates tables for actors (farmers, middlemen, exporters)
+- Sets up relationship tables (farmer-middleman, middleman-exporter)
+- Establishes geography mappings
+- Implements partitioning by country
 
-- Python 3.x
-- Pandas
-- NumPy
-- Multiprocessing
-- Streamlit
-- Matplotlib
-- Seaborn
+### 2. Country Initialization
+- Creates actors based on geography data:
+  - Farmers: Distributed across geographies with production volumes
+  - Middlemen: Assigned to geographic regions
+  - Exporters: Created with EU preferences and competitiveness scores
 
-Ensure all dependencies are installed before running the scripts.
+### 3. Trading Network Creation
+For each simulation year:
+
+1. **Geographic Assignment**
+   - Middlemen are assigned to geographic regions
+   - Assignments can change yearly based on configured rates
+
+2. **Relationship Formation**
+   - Initial Year (0):
+     - Farmers randomly connect to 1-3 middlemen in their region
+     - Middlemen connect to 1-3 exporters
+   - Subsequent Years:
+     - Relationships update based on loyalty scores
+     - New relationships form when old ones end
+
+3. **Trade Flow Generation**
+   - Production volumes split among relationships
+   - EU sales determined by:
+     - Country's total EU export target
+     - Exporter's EU preference
+     - Random variation
+
+### Randomization Assumptions
+
+1. **Actor Creation**
+   - Farmer production: Log-normal distribution around regional averages
+   - Middleman capacity: Based on regional farmer counts
+   - Exporter capacity: Pareto distribution for size variation
+
+2. **Relationship Formation**
+   - Initial connections: Random selection within constraints
+   - Relationship changes: Probability based on loyalty scores
+   - Geographic changes: Annual probability (default 10%)
+
+3. **Volume Distribution**
+   - Dirichlet distribution for fair splitting among relationships
+   - EU sales probability weighted by exporter preference
+
+### Key Parameters
+
+- `max_buyers_per_farmer`: Maximum middlemen per farmer (default: 3)
+- `max_exporters_per_middleman`: Maximum exporters per middleman (default: 5)
+- `farmer_switch_rate`: Annual rate of farmer relationship changes
+- `geography_change_rate`: Annual rate of middleman location changes
+- `traceability_rate`: Percentage of traceable volumes
+
+## Output Data
+
+The simulation generates:
+- Relationship records with temporal validity
+- Trade flows with volumes and EU/non-EU designation
+- Geographic coverage metrics
+- Actor relationship statistics
+
+## Analysis Tools
+
+The simulation includes tools for:
+- Network analysis of trading relationships
+- Volume distribution analysis
+- Geographic coverage assessment
+- EU export compliance verification
