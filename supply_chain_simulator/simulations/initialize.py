@@ -14,8 +14,7 @@ from database.registries import (
     GeographyRegistry, 
     FarmerRegistry, 
     MiddlemanRegistry, 
-    ExporterRegistry,
-    TradingRegistry
+    ExporterRegistry
 )
 from config.settings import DATA_DIR
 from config.simulation import (
@@ -24,47 +23,14 @@ from config.simulation import (
     FARMER_PLOT_THRESHOLDS
 )
 
-class CountryInitializer:
-    """Handles initialization of a country's supply chain actors."""
-    
-    def __init__(self, db_manager: DatabaseManager):
-        self.db = db_manager
-        self.country_registry = CountryRegistry(db_manager)
-        self.geography_registry = GeographyRegistry(db_manager)
-        self.farmer_registry = FarmerRegistry(db_manager)
-        self.middleman_registry = MiddlemanRegistry(db_manager)
-        self.exporter_registry = ExporterRegistry(db_manager)
-        self.trading_registry = TradingRegistry(db_manager)
-        
-        # Load reference data
+logger = logging.getLogger(__name__)
+
+class CountryData:
+    """Container for country initialization data"""
+    def __init__(self):
         self.country_codes = self._load_country_codes()
         self.country_assumptions = self._load_country_assumptions()
         self.geography_data = self._load_geography_data()
-
-        np.random.seed(DEFAULT_RANDOM_SEED)
-
-    def initialize_country(self, country_id: str) -> Country:
-        """Initialize a new country with all its actors."""
-        try:
-            # First create the country
-            country = self._create_country(country_id)
-            
-            # Then create geographies
-            geographies = self._create_geographies(country)
-            
-            # Then create actors that depend on both
-            farmers = self._create_farmers(country, geographies)
-            middlemen = self._create_middlemen(country)
-            exporters = self._create_exporters(country)
-            
-            # Save everything in the correct order
-            self._save_to_database(country, geographies, farmers, middlemen, exporters)
-            
-            return country
-            
-        except Exception as e:
-            logging.error(f"Error initializing country: {str(e)}")
-            raise
 
     def _load_country_codes(self) -> Dict:
         """Load country code mappings."""
@@ -79,6 +45,57 @@ class CountryInitializer:
         """Load geography data."""
         return pd.read_csv(DATA_DIR / '_local/jebena_geodata.csv')
 
+class CountryInitializer:
+    """Handles initialization of a country's supply chain actors."""
+    
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+        
+        # Setup registries
+        self.country_registry = CountryRegistry(db_manager)
+        self.geography_registry = GeographyRegistry(db_manager)
+        self.farmer_registry = FarmerRegistry(db_manager)
+        self.middleman_registry = MiddlemanRegistry(db_manager)
+        self.exporter_registry = ExporterRegistry(db_manager)
+        
+        # Load reference data once during initialization
+        logger.info("Loading reference data...")
+        self.data = CountryData()  # Create data container
+        self.country_codes = self.data.country_codes
+        self.country_assumptions = self.data.country_assumptions
+        self.geography_data = self.data.geography_data
+        logger.info("Reference data loaded successfully")
+
+        np.random.seed(DEFAULT_RANDOM_SEED)
+
+    def initialize_country(self, country_id: str) -> Country:
+        """Initialize a country with clearer steps."""
+        try:
+            with self.db.transaction():
+                # 1. Create base entities
+                country = self._create_country(country_id)
+                geographies = self._create_geographies(country)
+                
+                # 2. Create actors
+                actors = self._create_actors(country, geographies)
+                
+                # 3. Save everything in one transaction
+                self._save_all(country, geographies, actors)
+                
+                return country
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize {country_id}: {e}")
+            raise
+
+    def _create_actors(self, country: Country, geographies: List[Geography]) -> Dict:
+        """Create all actors in one place."""
+        return {
+            'farmers': self._create_farmers(country, geographies),
+            'middlemen': self._create_middlemen(country),
+            'exporters': self._create_exporters(country)
+        }
+
     def _create_country(self, country_id: str) -> Country:
         """Create and configure a country instance."""
         country_name = self.country_codes[country_id.lower()]['full']
@@ -91,19 +108,32 @@ class CountryInitializer:
             self.geography_data['ssu_name'].str[:2] == country_id.lower()
         ]
         
-        total_farmers = int(geo_df['estimated_arabica_farmer_population'].sum() + 
-                           geo_df['estimated_robusta_farmer_population'].sum())
-        total_production = int(geo_df['estimated_arabica_production_in_kg'].sum() + 
-                             geo_df['estimated_robusta_production_in_kg'].sum())
+        # Use BIGINT for large numbers
+        total_farmers = int(min(
+            geo_df['estimated_arabica_farmer_population'].sum() + 
+            geo_df['estimated_robusta_farmer_population'].sum(),
+            2147483647  # PostgreSQL integer max
+        ))
+        
+        total_production = int(min(
+            geo_df['estimated_arabica_production_in_kg'].sum() + 
+            geo_df['estimated_robusta_production_in_kg'].sum(),
+            2147483647  # PostgreSQL integer max
+        ))
+        
+        # Log the actual values for debugging
+        logger.info(f"Country {country_id} totals:")
+        logger.info(f"- Raw total farmers: {total_farmers:,}")
+        logger.info(f"- Raw total production: {total_production:,} kg")
         
         return Country(
             id=country_id,
             name=country_name,
             num_farmers=total_farmers,
             total_production=total_production,
-            num_middlemen=int(assumptions['num_middlemen']),
-            num_exporters=int(assumptions['num_exporters']),
-            exports_to_eu=int(assumptions['exports_to_eu'])
+            num_middlemen=int(min(assumptions['num_middlemen'], 2147483647)),
+            num_exporters=int(min(assumptions['num_exporters'], 2147483647)),
+            exports_to_eu=int(min(assumptions['exports_to_eu'], 2147483647))
         )
 
     def _create_geographies(self, country: Country) -> List[Geography]:
@@ -257,42 +287,25 @@ class CountryInitializer:
             for i in range(country.num_exporters)
         ]
 
-    def _save_to_database(self, country: Country, geographies: List[Geography], 
-                         farmers: List[Farmer], middlemen: List[Middleman], 
-                         exporters: List[Exporter]) -> None:
-        """Save all generated data to the database in the correct order."""
+    def _save_all(self, country: Country, geographies: List[Geography], actors: Dict) -> None:
+        """Save all entities in a single transaction."""
         try:
-            # First save the country
-            logging.info(f"Saving country: {country.id} - {country.name}")
-            self.country_registry.create(country)
-            
-            # Verify country was saved
-            saved_country = self.country_registry.get_by_id(country.id)
-            if not saved_country:
-                raise Exception(f"Failed to save country {country.id}")
-            logging.info("Country saved successfully")
-            
-            # Then save geographies
-            logging.info(f"Saving {len(geographies)} geographies")
-            self.geography_registry.create_many(geographies)
-            logging.info("Geographies saved successfully")
-            
-            # Then save actors
-            logging.info(f"Saving {len(farmers)} farmers")
-            self.farmer_registry.create_many(farmers)
-            logging.info("Farmers saved successfully")
-            
-            logging.info(f"Saving {len(middlemen)} middlemen")
-            self.middleman_registry.create_many(middlemen)
-            logging.info("Middlemen saved successfully")
-            
-            logging.info(f"Saving {len(exporters)} exporters")
-            self.exporter_registry.create_many(exporters)
-            logging.info("Exporters saved successfully")
-            
+            with self.db.transaction():  # Add transaction context manager to DatabaseManager
+                logger.info(f"Saving country: {country.id} - {country.name}")
+                self.country_registry.create(country)
+                
+                logger.info(f"Saving {len(geographies)} geographies")
+                self.geography_registry.create_many(geographies)
+                
+                logger.info(f"Saving {len(actors['farmers'])} farmers")
+                self.farmer_registry.create_many(actors['farmers'])
+                
+                logger.info(f"Saving {len(actors['middlemen'])} middlemen")
+                self.middleman_registry.create_many(actors['middlemen'])
+                
+                logger.info(f"Saving {len(actors['exporters'])} exporters")
+                self.exporter_registry.create_many(actors['exporters'])
+                
         except Exception as e:
-            logging.error(f"Error saving to database: {str(e)}")
-            # Add transaction rollback
-            if hasattr(self.db, 'rollback'):
-                self.db.rollback()
+            logger.error(f"Error saving data: {str(e)}")
             raise

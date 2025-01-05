@@ -1,7 +1,10 @@
-from typing import List, Optional, Dict, Any
+import logging
+from typing import List, Dict, Any, Optional
 from models.actors import Farmer, Middleman, Exporter
 from models.geography import Country, Geography
 from supply_chain_simulator.models.trade_flow import TradeFlow
+
+logger = logging.getLogger(__name__)
 
 class BaseRegistry:
     """Base class for all registries providing common database operations."""
@@ -9,6 +12,11 @@ class BaseRegistry:
     def __init__(self, db_manager):
         self.db = db_manager
 
+    def get_by_country(self, country_id: str) -> List[Dict]:
+        """Query directly from country partition."""
+        return self.db.fetch_all(
+            f"SELECT * FROM {self.TABLE_NAME}_{country_id}"
+        )
 
 class CountryRegistry(BaseRegistry):
     """Registry for managing Country records."""
@@ -230,12 +238,11 @@ class TradingRegistry(BaseRegistry):
         )
         return [TradeFlow.from_dict(row) for row in data]
     
-    def get_by_year_and_country(self, year: int, country_id: str) -> List[TradeFlow]:
-        data = self.db.fetch_all("""
-            SELECT * FROM trading_flows 
-            WHERE year = %s AND country_id = %s
-        """, (year, country_id))
-        return [TradeFlow.from_dict(row) for row in data]
+    def get_by_year_and_country(self, year: int, country_id: str) -> List[Dict]:
+        """Query directly from year partition."""
+        return self.db.fetch_all(
+            f"SELECT * FROM trading_flows_{country_id}_{year}"
+        )
     
     def get_by_year_and_middleman(self, year: int, middleman_id: str) -> List[TradeFlow]:
         data = self.db.fetch_all("""
@@ -311,3 +318,130 @@ class TradingRegistry(BaseRegistry):
             AND tr.middleman_id = %s
         """, (year, country_id, middleman_id))
         return [row['geography_id'] for row in data]
+
+
+class RelationshipRegistry(BaseRegistry):
+    """Base class for relationship registries with common operations."""
+    
+    def create_many(self, relationships: List[Dict], year: int) -> None:
+        """Create new relationships."""
+        try:
+            # Convert dictionaries to tuples in the correct order
+            params = [
+                (rel[self.FROM_ID_KEY], rel[self.TO_ID_KEY], year, None)
+                for rel in relationships
+            ]
+            self.db.execute_many(self.INSERT_QUERY, params)
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise
+
+    def end_relationships(self, relationships: List[tuple], year: int) -> None:
+        """Mark relationships as ended in the given year."""
+        try:
+            for from_id, to_id in relationships:
+                self.db.execute(self.UPDATE_QUERY, (year, from_id, to_id))
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise
+
+    def get_active_relationships(self, year: int, country_id: str) -> List[Dict]:
+        """Query with country_id first for partition pruning."""
+        return self.db.fetch_all("""
+            SELECT * FROM {table_name}
+            WHERE country_id = %s 
+            AND created_at <= %s 
+            AND (deleted_at IS NULL OR deleted_at > %s)
+        """, (country_id, year, year))
+
+
+class MiddlemanGeographyRegistry(RelationshipRegistry):
+    """Registry for middleman-geography relationships."""
+    
+    INSERT_QUERY = """
+        INSERT INTO middleman_geography_relationships 
+        (middleman_id, geography_id, created_at, deleted_at)
+        VALUES (%s, %s, %s, %s)
+    """
+    
+    UPDATE_QUERY = """
+        UPDATE middleman_geography_relationships
+        SET deleted_at = %s
+        WHERE middleman_id = %s 
+        AND geography_id = %s
+        AND deleted_at IS NULL
+    """
+    
+    SELECT_ACTIVE_QUERY = """
+        SELECT 
+            middleman_id as middleman_id,
+            geography_id as geography_id
+        FROM middleman_geography_relationships
+        WHERE created_at <= %s 
+        AND (deleted_at IS NULL OR deleted_at > %s)
+    """
+
+    FROM_ID_KEY = 'middleman_id'
+    TO_ID_KEY = 'geography_id'
+
+
+class FarmerMiddlemanRegistry(RelationshipRegistry):
+    """Registry for farmer-middleman relationships."""
+    
+    INSERT_QUERY = """
+        INSERT INTO farmer_middleman_relationships 
+        (farmer_id, middleman_id, created_at, deleted_at)
+        VALUES (%s, %s, %s, %s)
+    """
+    
+    UPDATE_QUERY = """
+        UPDATE farmer_middleman_relationships
+        SET deleted_at = %s
+        WHERE farmer_id = %s 
+        AND middleman_id = %s
+        AND deleted_at IS NULL
+    """
+    
+    SELECT_ACTIVE_QUERY = """
+        SELECT 
+            farmer_id as farmer_id,
+            middleman_id as middleman_id
+        FROM farmer_middleman_relationships
+        WHERE created_at <= %s 
+        AND (deleted_at IS NULL OR deleted_at > %s)
+    """
+
+    FROM_ID_KEY = 'farmer_id'
+    TO_ID_KEY = 'middleman_id'
+
+
+class MiddlemanExporterRegistry(RelationshipRegistry):
+    """Registry for middleman-exporter relationships."""
+    
+    INSERT_QUERY = """
+        INSERT INTO middleman_exporter_relationships 
+        (middleman_id, exporter_id, created_at, deleted_at)
+        VALUES (%s, %s, %s, %s)
+    """
+    
+    UPDATE_QUERY = """
+        UPDATE middleman_exporter_relationships
+        SET deleted_at = %s
+        WHERE middleman_id = %s 
+        AND exporter_id = %s
+        AND deleted_at IS NULL
+    """
+    
+    SELECT_ACTIVE_QUERY = """
+        SELECT 
+            middleman_id as middleman_id,
+            exporter_id as exporter_id
+        FROM middleman_exporter_relationships
+        WHERE created_at <= %s 
+        AND (deleted_at IS NULL OR deleted_at > %s)
+    """
+
+    FROM_ID_KEY = 'middleman_id'
+    TO_ID_KEY = 'exporter_id'

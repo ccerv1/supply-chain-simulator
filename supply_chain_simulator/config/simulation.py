@@ -15,7 +15,7 @@ FARMER_PLOT_THRESHOLDS = {
     }
 }
 COUNTRIES = [
-    # 'BR',
+    'BR',
     # 'CO',
     # 'PE',
     # 'VN',

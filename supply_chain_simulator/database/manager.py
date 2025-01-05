@@ -3,9 +3,12 @@ from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Any, Optional
 from contextlib import contextmanager
 from pathlib import Path
+import logging
 
 from config.config import DB_CONFIG
-from .schemas import SCHEMA_DEFINITIONS
+from .schemas import SCHEMA_DEFINITIONS, PARTITION_STATEMENTS, INDEX_STATEMENTS
+
+logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     def __init__(self, connection_params):
@@ -68,7 +71,8 @@ class DatabaseManager:
         conn = self.get_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params)
-            return cur.fetchall()
+            result = cur.fetchall()
+            return [dict(row) for row in result]
     
     def wipe_database(self) -> None:
         """Drop all tables in the database."""
@@ -89,3 +93,86 @@ class DatabaseManager:
             
         # Reinitialize the database with empty tables
         self.initialize_database()
+    
+    @contextmanager
+    def transaction(self):
+        """Context manager for database transactions."""
+        try:
+            yield
+            self.commit()
+        except Exception:
+            self.rollback()
+            raise
+    
+    @contextmanager
+    def batch_operation(self):
+        """Context manager for batch database operations."""
+        try:
+            yield self
+            self.commit()
+        except Exception as e:
+            self.rollback()
+            logger.error(f"Database error: {str(e)}")
+            raise
+    
+    def execute_batch(self, query: str, params: List[tuple]):
+        """Execute multiple operations in a single transaction."""
+        with self.batch_operation():
+            with self.get_connection().cursor() as cur:
+                cur.executemany(query, params)
+                
+    def fetch_by_country(self, query: str, country_id: str) -> List[Dict]:
+        """Common operation to fetch records by country."""
+        return self.fetch_all(query, (country_id,))
+    
+    def create_partitions(self, country_id: str, year: int = None):
+        """Create partitions for a country and optionally a specific year."""
+        with self.transaction():
+            # Create country-based partitions
+            for table in ['geographies', 'farmers', 'middlemen', 'exporters']:
+                self.execute(
+                    PARTITION_STATEMENTS['create_country_partition'].format(
+                        table_name=table,
+                        country_id=country_id
+                    )
+                )
+            
+            # Create trading flow partitions if year specified
+            if year is not None:
+                # Create country partition for trading flows if it doesn't exist
+                self.execute(
+                    PARTITION_STATEMENTS['create_trading_partition'].format(
+                        country_id=country_id,
+                        year=year
+                    )
+                )
+                
+                # Create year partition
+                self.execute(
+                    PARTITION_STATEMENTS['create_year_partition'].format(
+                        country_id=country_id,
+                        year=year,
+                        next_year=year + 1
+                    )
+                )
+    
+    def create_indexes(self, country_id: str, year: int = None):
+        """Create indexes for partitioned tables."""
+        with self.transaction():
+            # Create indexes for country partitions
+            for table in ['farmers', 'middlemen', 'exporters']:
+                self.execute(
+                    INDEX_STATEMENTS['create_geography_indexes'].format(
+                        table=table,
+                        country_id=country_id
+                    )
+                )
+            
+            # Create indexes for trading flows if year specified
+            if year is not None:
+                self.execute(
+                    INDEX_STATEMENTS['create_trading_indexes'].format(
+                        country_id=country_id,
+                        year=year
+                    )
+                )
