@@ -90,7 +90,13 @@ def run_country_simulation(db_config: Dict, country_id: str, year: int) -> None:
         # Run simulation
         logger.info(f"Running simulation for {country_id} year {year}")
         country_sim = CountrySimulation(db_manager)
-        country_sim.simulate_year(country_id, year)
+        
+        # Initialize country and set relationships
+        country_sim.initialize_country_actors(country_id)
+        country_sim.set_middleman_geographies(year)
+        
+        # Run trading simulation
+        country_sim.simulate_trading_year(year)
         
         # Cleanup
         db_manager.close()
