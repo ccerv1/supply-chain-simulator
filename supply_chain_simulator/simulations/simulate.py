@@ -70,7 +70,7 @@ class CountrySimulation:
                 self.mm_geo_registry.create_many(relationships, year)
             else:
                 # Get current relationships
-                current_relationships = self.mm_geo_registry.get_active_relationships(year)
+                current_relationships = self.mm_geo_registry.get_active_relationships(year, self.country_id)
                 
                 # Process changes based on geography_change_rate
                 relationships_to_end = []
@@ -103,7 +103,7 @@ class CountrySimulation:
                     self.mm_geo_registry.create_many(new_relationships, year)
             
             # Return active relationships for this year
-            return self.mm_geo_registry.get_active_relationships(year)
+            return self.mm_geo_registry.get_active_relationships(year, self.country_id)
             
         except Exception as e:
             logger.error(f"Error setting middleman geographies: {str(e)}")
@@ -119,7 +119,7 @@ class CountrySimulation:
             exporters = self.initializer.exporter_registry.get_by_country(self.country_id)
             
             # Get active relationships for this year
-            mm_geo_rels = self.mm_geo_registry.get_active_relationships(year)
+            mm_geo_rels = self.mm_geo_registry.get_active_relationships(year, self.country_id)
             if not mm_geo_rels:
                 raise ValueError("No middleman-geography relationships found")
 
@@ -131,7 +131,10 @@ class CountrySimulation:
                 exporters=exporters,
                 year=year
             )
-            self.simulator.trading_registry.create_many(trade_flows)
+            
+            if trade_flows:
+                self.simulator.trading_registry.create_many(trade_flows)
+            
             return trade_flows
 
         except Exception as e:
@@ -139,18 +142,13 @@ class CountrySimulation:
             raise
 
     def simulate_year(self, country_id: str, year: int) -> None:
-        """Ensure partitions exist before simulation."""
+        """Run single year simulation."""
         try:
-            # Create partitions for this year
-            self.db.create_partitions(country_id, year)
+            # Set country ID if not already set
+            if not self.country_id:
+                self.country_id = country_id
             
-            # Get actors from partitioned tables
-            country = self.initializer.country_registry.get_by_id(country_id)
-            farmers = self.farmer_registry.get_by_country(country_id)
-            middlemen = self.middleman_registry.get_by_country(country_id)
-            exporters = self.exporter_registry.get_by_country(country_id)
-            
-            # Check existing simulation in partitioned table
+            # Check existing simulation
             existing = self.simulator.trading_registry.get_by_year_and_country(year, country_id)
             if existing:
                 logger.info(f"Year {year} already simulated for {country_id}")

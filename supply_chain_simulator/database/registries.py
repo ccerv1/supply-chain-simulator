@@ -13,9 +13,10 @@ class BaseRegistry:
         self.db = db_manager
 
     def get_by_country(self, country_id: str) -> List[Dict]:
-        """Query directly from country partition."""
+        """Get records by country."""
         return self.db.fetch_all(
-            f"SELECT * FROM {self.TABLE_NAME}_{country_id}"
+            f"SELECT * FROM {self.TABLE_NAME} WHERE country_id = %s",
+            (country_id,)
         )
 
 class CountryRegistry(BaseRegistry):
@@ -214,22 +215,46 @@ class TradingRegistry(BaseRegistry):
     """Registry for managing trading relationships."""
     
     def create_many(self, relationships: List[TradeFlow]) -> None:
-        self.db.execute_many("""
-            INSERT INTO trading_flows (
-                year, country_id, farmer_id, middleman_id,
-                exporter_id, sold_to_eu, amount_kg
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, [
-            (
-                r.year,
-                r.country_id,
-                r.farmer_id,
-                r.middleman_id,
-                r.exporter_id,
-                r.sold_to_eu,
-                r.amount_kg
-            ) for r in relationships
-        ])
+        """Create trade flows, combining duplicates."""
+        try:
+            # Create a dictionary to combine duplicate flows
+            combined_flows = {}
+            
+            for flow in relationships:
+                key = (flow.year, flow.country_id, flow.farmer_id, 
+                      flow.middleman_id, flow.exporter_id)
+                if key in combined_flows:
+                    # Add volumes for same flow
+                    combined_flows[key].amount_kg += flow.amount_kg
+                else:
+                    combined_flows[key] = flow
+            
+            # Convert back to list and prepare for insert
+            unique_flows = list(combined_flows.values())
+            
+            # Insert unique flows
+            self.db.execute_many("""
+                INSERT INTO trading_flows (
+                    year, country_id, farmer_id, middleman_id,
+                    exporter_id, sold_to_eu, amount_kg
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (country_id, year, farmer_id, middleman_id, exporter_id)
+                DO UPDATE SET amount_kg = trading_flows.amount_kg + EXCLUDED.amount_kg
+            """, [
+                (
+                    flow.year,
+                    flow.country_id,
+                    flow.farmer_id,
+                    flow.middleman_id,
+                    flow.exporter_id,
+                    flow.sold_to_eu,
+                    flow.amount_kg
+                ) for flow in unique_flows
+            ])
+            
+        except Exception as e:
+            logger.error(f"Error creating trade flows: {str(e)}")
+            raise
     
     def get_by_year(self, year: int) -> List[TradeFlow]:
         data = self.db.fetch_all(
@@ -239,10 +264,11 @@ class TradingRegistry(BaseRegistry):
         return [TradeFlow.from_dict(row) for row in data]
     
     def get_by_year_and_country(self, year: int, country_id: str) -> List[Dict]:
-        """Query directly from year partition."""
-        return self.db.fetch_all(
-            f"SELECT * FROM trading_flows_{country_id}_{year}"
-        )
+        """Get trading flows for a specific year and country."""
+        return self.db.fetch_all("""
+            SELECT * FROM trading_flows 
+            WHERE year = %s AND country_id = %s
+        """, (year, country_id))
     
     def get_by_year_and_middleman(self, year: int, middleman_id: str) -> List[TradeFlow]:
         data = self.db.fetch_all("""
@@ -326,7 +352,6 @@ class RelationshipRegistry(BaseRegistry):
     def create_many(self, relationships: List[Dict], year: int) -> None:
         """Create new relationships."""
         try:
-            # Convert dictionaries to tuples in the correct order
             params = [
                 (rel[self.FROM_ID_KEY], rel[self.TO_ID_KEY], year, None)
                 for rel in relationships
@@ -348,17 +373,18 @@ class RelationshipRegistry(BaseRegistry):
             raise
 
     def get_active_relationships(self, year: int, country_id: str) -> List[Dict]:
-        """Query with country_id first for partition pruning."""
-        return self.db.fetch_all("""
-            SELECT * FROM {table_name}
-            WHERE country_id = %s 
-            AND created_at <= %s 
+        """Get active relationships for a specific year."""
+        return self.db.fetch_all(f"""
+            SELECT {self.FROM_ID_KEY}, {self.TO_ID_KEY}
+            FROM {self.TABLE_NAME}
+            WHERE created_at <= %s 
             AND (deleted_at IS NULL OR deleted_at > %s)
-        """, (country_id, year, year))
+        """, (year, year))
 
 
 class MiddlemanGeographyRegistry(RelationshipRegistry):
     """Registry for middleman-geography relationships."""
+    TABLE_NAME = 'middleman_geography_relationships'
     
     INSERT_QUERY = """
         INSERT INTO middleman_geography_relationships 
@@ -373,15 +399,6 @@ class MiddlemanGeographyRegistry(RelationshipRegistry):
         AND geography_id = %s
         AND deleted_at IS NULL
     """
-    
-    SELECT_ACTIVE_QUERY = """
-        SELECT 
-            middleman_id as middleman_id,
-            geography_id as geography_id
-        FROM middleman_geography_relationships
-        WHERE created_at <= %s 
-        AND (deleted_at IS NULL OR deleted_at > %s)
-    """
 
     FROM_ID_KEY = 'middleman_id'
     TO_ID_KEY = 'geography_id'
@@ -389,6 +406,7 @@ class MiddlemanGeographyRegistry(RelationshipRegistry):
 
 class FarmerMiddlemanRegistry(RelationshipRegistry):
     """Registry for farmer-middleman relationships."""
+    TABLE_NAME = 'farmer_middleman_relationships'
     
     INSERT_QUERY = """
         INSERT INTO farmer_middleman_relationships 
@@ -403,15 +421,6 @@ class FarmerMiddlemanRegistry(RelationshipRegistry):
         AND middleman_id = %s
         AND deleted_at IS NULL
     """
-    
-    SELECT_ACTIVE_QUERY = """
-        SELECT 
-            farmer_id as farmer_id,
-            middleman_id as middleman_id
-        FROM farmer_middleman_relationships
-        WHERE created_at <= %s 
-        AND (deleted_at IS NULL OR deleted_at > %s)
-    """
 
     FROM_ID_KEY = 'farmer_id'
     TO_ID_KEY = 'middleman_id'
@@ -419,6 +428,7 @@ class FarmerMiddlemanRegistry(RelationshipRegistry):
 
 class MiddlemanExporterRegistry(RelationshipRegistry):
     """Registry for middleman-exporter relationships."""
+    TABLE_NAME = 'middleman_exporter_relationships'
     
     INSERT_QUERY = """
         INSERT INTO middleman_exporter_relationships 
@@ -432,15 +442,6 @@ class MiddlemanExporterRegistry(RelationshipRegistry):
         WHERE middleman_id = %s 
         AND exporter_id = %s
         AND deleted_at IS NULL
-    """
-    
-    SELECT_ACTIVE_QUERY = """
-        SELECT 
-            middleman_id as middleman_id,
-            exporter_id as exporter_id
-        FROM middleman_exporter_relationships
-        WHERE created_at <= %s 
-        AND (deleted_at IS NULL OR deleted_at > %s)
     """
 
     FROM_ID_KEY = 'middleman_id'

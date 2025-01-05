@@ -31,14 +31,14 @@ SCHEMA_DEFINITIONS = {
             num_farmers INTEGER,
             total_production_kg INTEGER,
             primary_crop TEXT,
-            FOREIGN KEY (country_id) REFERENCES countries (id)
-            PRIMARY KEY (id, country_id)
-        ) PARTITION BY LIST (country_id)
+            FOREIGN KEY (country_id) REFERENCES countries (id),
+            PRIMARY KEY (id)
+        )
     """,
     
     'farmers': """
         CREATE TABLE IF NOT EXISTS farmers (
-            id TEXT,
+            id TEXT PRIMARY KEY,
             country_id TEXT,
             geography_id TEXT,
             num_plots INTEGER,
@@ -46,31 +46,28 @@ SCHEMA_DEFINITIONS = {
             loyalty REAL,
             FOREIGN KEY (geography_id) REFERENCES geographies (id),
             FOREIGN KEY (country_id) REFERENCES countries (id)
-            PRIMARY KEY (id, country_id)
-        ) PARTITION BY LIST (country_id)
+        )
     """,
     
     'middlemen': """
         CREATE TABLE IF NOT EXISTS middlemen (
-            id TEXT,
+            id TEXT PRIMARY KEY,
             country_id TEXT,
             competitiveness REAL,
             loyalty REAL,
             FOREIGN KEY (country_id) REFERENCES countries (id)
-            PRIMARY KEY (id, country_id)
-        ) PARTITION BY LIST (country_id)
+        )
     """,
     
     'exporters': """
         CREATE TABLE IF NOT EXISTS exporters (
-            id TEXT,
+            id TEXT PRIMARY KEY,
             country_id TEXT,
             competitiveness REAL,
             eu_preference REAL,
             loyalty REAL,
             FOREIGN KEY (country_id) REFERENCES countries (id)
-            PRIMARY KEY (id, country_id)
-        ) PARTITION BY LIST (country_id)
+        )
     """,
     
     'trading_flows': """
@@ -85,9 +82,9 @@ SCHEMA_DEFINITIONS = {
             FOREIGN KEY (farmer_id) REFERENCES farmers (id),
             FOREIGN KEY (middleman_id) REFERENCES middlemen (id),
             FOREIGN KEY (exporter_id) REFERENCES exporters (id),
-            FOREIGN KEY (country_id) REFERENCES countries (id)
+            FOREIGN KEY (country_id) REFERENCES countries (id),
             PRIMARY KEY (country_id, year, farmer_id, middleman_id, exporter_id)
-        ) PARTITION BY LIST (country_id), RANGE (year)
+        )
     """,
     
     'middleman_geography_relationships': """
@@ -124,43 +121,5 @@ SCHEMA_DEFINITIONS = {
             FOREIGN KEY (middleman_id) REFERENCES middlemen (id),
             FOREIGN KEY (exporter_id) REFERENCES exporters (id)
         )
-    """
-}
-
-# Add partition creation statements
-PARTITION_STATEMENTS = {
-    'create_country_partition': """
-        CREATE TABLE IF NOT EXISTS {table_name}_{country_id} 
-        PARTITION OF {table_name}
-        FOR VALUES IN ('{country_id}')
-    """,
-    
-    'create_trading_partition': """
-        CREATE TABLE IF NOT EXISTS trading_flows_{country_id}_{year} 
-        PARTITION OF trading_flows
-        FOR VALUES IN ('{country_id}')
-        PARTITION BY RANGE (year)
-    """,
-    
-    'create_year_partition': """
-        CREATE TABLE IF NOT EXISTS trading_flows_{country_id}_{year} 
-        PARTITION OF trading_flows_{country_id}
-        FOR VALUES FROM ({year}) TO ({next_year})
-    """
-}
-
-INDEX_STATEMENTS = {
-    'create_geography_indexes': """
-        CREATE INDEX IF NOT EXISTS idx_{table}_{country_id}_geo 
-        ON {table}_{country_id} (geography_id)
-    """,
-    
-    'create_trading_indexes': """
-        CREATE INDEX IF NOT EXISTS idx_trading_{country_id}_{year}_farmer 
-        ON trading_flows_{country_id}_{year} (farmer_id);
-        CREATE INDEX IF NOT EXISTS idx_trading_{country_id}_{year}_middleman 
-        ON trading_flows_{country_id}_{year} (middleman_id);
-        CREATE INDEX IF NOT EXISTS idx_trading_{country_id}_{year}_exporter 
-        ON trading_flows_{country_id}_{year} (exporter_id);
     """
 }
