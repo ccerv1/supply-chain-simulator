@@ -13,7 +13,7 @@ import logging
 import random
 
 from models.actors import Farmer, Middleman, Exporter
-from models.geography import Country, Geography
+from models.geography import Country
 from supply_chain_simulator.models.trade_flow import TradeFlow
 from database.manager import DatabaseManager
 from database.registries import (
@@ -56,11 +56,11 @@ class TradeSimulator:
         """Create trading relationships between actors."""
         try:
             # Get active relationships for this year
+            # TODO: refactor to use a single query
             mm_geo_rels = self.mm_geo_registry.get_active_relationships(year, country.id)
             farmer_mm_rels = self.farmer_mm_registry.get_active_relationships(year, country.id)
             mm_exp_rels = self.mm_exp_registry.get_active_relationships(year, country.id)
             
-            # Process in a single transaction
             with self.db.transaction():
                 if year == 0:
                     # Initial relationships
@@ -103,6 +103,7 @@ class TradeSimulator:
         relationships_to_end = []
         new_relationships = []
         
+        # TODO: vectorize this
         for farmer in farmers:
             if random.random() < (1 - farmer.loyalty) * country.farmer_switch_rate:
                 # Get current middlemen
@@ -123,7 +124,7 @@ class TradeSimulator:
                     old_mm = random.choice(current_mms)
                     relationships_to_end.append((farmer.id, old_mm))
                     
-                    # Start a new one - Changed to dictionary format
+                    # Start a new one
                     new_mm = random.choice(available_mms)
                     new_relationships.append({
                         'farmer_id': farmer.id,
@@ -144,6 +145,7 @@ class TradeSimulator:
         relationships_to_end = []
         new_relationships = []
         
+        # TODO: vectorize this
         for middleman in middlemen:
             if random.random() < (1 - middleman.loyalty) * country.middleman_switch_rate:
                 # Get current and available exporters
@@ -307,7 +309,7 @@ class TradeSimulator:
     def _generate_farmer_flows(self, farmer: Farmer, middleman_ids: List[str], 
                              mm_exp_map: Dict, exporter_lookup: Dict, country: Country, year: int) -> List[TradeFlow]:
         """Generate trade flows for a single farmer."""
-        flows_dict = {}  # Use dict to prevent duplicates
+        flows_dict = {}  
         total_eu_volume = 0
         
         # Pre-calculate EU ratio for this farmer's production
